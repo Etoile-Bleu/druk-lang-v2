@@ -10,5 +10,7 @@ workspace = true
 [dependencies]
 druk-parser = { workspace = true }
 druk-hir = { workspace = true }
+druk-ir = { workspace = true }
+druk-codegen-llvm = { workspace = true }
 druk-diagnostics = { workspace = true }
 thiserror = { workspace = true }
