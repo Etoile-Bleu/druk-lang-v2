@@ -10,3 +10,6 @@ workspace = true
 [dependencies]
 druk-ast = { workspace = true }
 druk-diagnostics = { workspace = true }
+
+[dev-dependencies]
+druk-parser = { workspace = true }
