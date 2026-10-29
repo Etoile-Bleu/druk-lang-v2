@@ -8,7 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-druk-ast = { workspace = true }
 druk-parser = { workspace = true }
+druk-hir = { workspace = true }
 druk-diagnostics = { workspace = true }
 thiserror = { workspace = true }

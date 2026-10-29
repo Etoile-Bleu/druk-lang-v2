@@ -35,11 +35,11 @@ fn init_logging(debug: bool) {
 
 fn run_check(file: &std::path::Path) -> ExitCode {
     match druk_driver::check_file(file) {
-        Ok(ast) => {
+        Ok(hir) => {
             println!(
-                "{}: parsed {} top-level statement(s), no diagnostics",
+                "{}: checked {} top-level statement(s), no diagnostics",
                 file.display(),
-                ast.top_level.len()
+                hir.ast.top_level.len()
             );
             ExitCode::SUCCESS
         }
