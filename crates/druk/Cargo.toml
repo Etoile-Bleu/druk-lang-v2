@@ -1,0 +1,17 @@
+[package]
+name = "druk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "druk"
+path = "src/main.rs"
+
+[dependencies]
+druk-driver = { workspace = true }
+clap = { workspace = true }
+tracing-subscriber = { workspace = true }
