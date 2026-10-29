@@ -3,6 +3,16 @@
 //! from LLVM IR, plus the operations (printing, string/array construction,
 //! array indexing, equality) that need the GC heap behind them.
 //!
+//! Every function that takes or returns an [`RtValue`] does so through a
+//! pointer (`*const RtValue` in, `*mut RtValue` out), never by value. A
+//! 16-byte struct crosses the Windows x64 "C" ABI through a hidden `sret`
+//! return slot and `byval` argument copies, but the x86-64 SysV ABI (Linux,
+//! macOS) returns and passes the same struct directly in two registers —
+//! two genuinely different calling conventions for the same Rust signature.
+//! Passing everything by pointer sidesteps that difference entirely: a
+//! pointer is passed in a register the same way on every platform, so
+//! `druk-codegen-llvm` never needs to know which ABI it's targeting.
+//!
 //! Scope for this first version: the operations the ten bundled example
 //! programs actually exercise. Printing an array's own contents, and the
 //! dzongkha builtins (`len`, `push`, `pop`, ...), are not implemented yet
@@ -188,25 +198,34 @@ fn format_value(value: RtValue) -> String {
     }
 }
 
+/// # Safety
+/// `value` must point to a valid, initialized `RtValue`, alive for the
+/// duration of this call. Codegen only ever passes a pointer to a stack slot
+/// it just finished writing.
 #[no_mangle]
-pub extern "C" fn druk_rt_print(value: RtValue) {
-    println!("{}", format_value(value));
+pub unsafe extern "C" fn druk_rt_print(value: *const RtValue) {
+    println!("{}", format_value(*value));
 }
 
 /// A raw `0`/`1` rather than an `RtValue`, so codegen can compare it
 /// directly against zero instead of round-tripping through the tagged
 /// representation just to branch on it.
+///
+/// # Safety
+/// `value` must point to a valid, initialized `RtValue`, alive for the
+/// duration of this call.
 #[no_mangle]
-pub extern "C" fn druk_rt_is_truthy(value: RtValue) -> i64 {
-    value.is_truthy() as i64
+pub unsafe extern "C" fn druk_rt_is_truthy(value: *const RtValue) -> i64 {
+    (*value).is_truthy() as i64
 }
 
 /// # Safety
-/// `bytes` must point to at least `len` valid, initialized bytes, alive for
-/// the duration of this call. Codegen only ever passes a pointer into a
-/// static byte buffer embedded in the compiled module, which satisfies this.
+/// `out` must point to a valid, writable `RtValue` slot. `bytes` must point
+/// to at least `len` valid, initialized bytes, alive for the duration of
+/// this call. Codegen only ever passes a pointer into a static byte buffer
+/// embedded in the compiled module, which satisfies this.
 #[no_mangle]
-pub unsafe extern "C" fn druk_rt_make_string(bytes: *const u8, len: usize) -> RtValue {
+pub unsafe extern "C" fn druk_rt_make_string(out: *mut RtValue, bytes: *const u8, len: usize) {
     let slice = std::slice::from_raw_parts(bytes, len);
     let owned = String::from_utf8_lossy(slice).into_owned();
     let mut guard = heap()
@@ -214,18 +233,23 @@ pub unsafe extern "C" fn druk_rt_make_string(bytes: *const u8, len: usize) -> Rt
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     maybe_collect(&mut guard, &[]);
     let handle = guard.alloc_string(owned);
-    RtValue {
+    *out = RtValue {
         tag: TAG_STR,
         payload: handle.index() as i64,
-    }
+    };
 }
 
 /// # Safety
-/// `elements` must point to at least `len` valid, initialized contiguous
-/// [`RtValue`] structs, alive for the duration of this call. Codegen only
-/// ever passes a pointer to a stack buffer it just finished writing.
+/// `out` must point to a valid, writable `RtValue` slot. `elements` must
+/// point to at least `len` valid, initialized contiguous [`RtValue`]
+/// structs, alive for the duration of this call. Codegen only ever passes a
+/// pointer to a stack buffer it just finished writing.
 #[no_mangle]
-pub unsafe extern "C" fn druk_rt_make_array(elements: *const RtValue, len: usize) -> RtValue {
+pub unsafe extern "C" fn druk_rt_make_array(
+    out: *mut RtValue,
+    elements: *const RtValue,
+    len: usize,
+) {
     let slice = std::slice::from_raw_parts(elements, len);
     let values: Vec<Value> = slice.iter().map(|element| element.to_value()).collect();
     let mut guard = heap()
@@ -233,29 +257,51 @@ pub unsafe extern "C" fn druk_rt_make_array(elements: *const RtValue, len: usize
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     maybe_collect(&mut guard, &values);
     let handle = guard.alloc_array(values);
-    RtValue {
+    *out = RtValue {
         tag: TAG_ARRAY,
         payload: handle.index() as i64,
-    }
+    };
 }
 
+/// # Safety
+/// `out`, `array`, and `index` must each point to a valid `RtValue` (`out`
+/// writable), alive for the duration of this call.
 #[no_mangle]
-pub extern "C" fn druk_rt_array_get(array: RtValue, index: RtValue) -> RtValue {
+pub unsafe extern "C" fn druk_rt_array_get(
+    out: *mut RtValue,
+    array: *const RtValue,
+    index: *const RtValue,
+) {
+    let array = *array;
+    let index = *index;
     if array.tag != TAG_ARRAY {
-        return RtValue::nil();
+        *out = RtValue::nil();
+        return;
     }
     let handle = handle_from_raw_index(array.payload as u32);
     let guard = heap()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let index = index.payload.max(0) as usize;
-    RtValue::from_value(guard.array_get(handle, index))
+    *out = RtValue::from_value(guard.array_get(handle, index));
 }
 
+/// # Safety
+/// `out`, `array`, `index`, and `value` must each point to a valid `RtValue`
+/// (`out` writable), alive for the duration of this call.
 #[no_mangle]
-pub extern "C" fn druk_rt_array_set(array: RtValue, index: RtValue, value: RtValue) -> RtValue {
+pub unsafe extern "C" fn druk_rt_array_set(
+    out: *mut RtValue,
+    array: *const RtValue,
+    index: *const RtValue,
+    value: *const RtValue,
+) {
+    let array = *array;
+    let index = *index;
+    let value = *value;
     if array.tag != TAG_ARRAY {
-        return value;
+        *out = value;
+        return;
     }
     let handle = handle_from_raw_index(array.payload as u32);
     let mut guard = heap()
@@ -263,11 +309,20 @@ pub extern "C" fn druk_rt_array_set(array: RtValue, index: RtValue, value: RtVal
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let index = index.payload.max(0) as usize;
     guard.array_set(handle, index, value.to_value());
-    value
+    *out = value;
 }
 
+/// # Safety
+/// `out`, `a`, and `b` must each point to a valid `RtValue` (`out`
+/// writable), alive for the duration of this call.
 #[no_mangle]
-pub extern "C" fn druk_rt_values_equal(a: RtValue, b: RtValue) -> RtValue {
+pub unsafe extern "C" fn druk_rt_values_equal(
+    out: *mut RtValue,
+    a: *const RtValue,
+    b: *const RtValue,
+) {
+    let a = *a;
+    let b = *b;
     let equal = if a.tag != b.tag {
         false
     } else if a.tag == TAG_STR {
@@ -280,7 +335,7 @@ pub extern "C" fn druk_rt_values_equal(a: RtValue, b: RtValue) -> RtValue {
     } else {
         a.payload == b.payload
     };
-    RtValue::boolean(equal)
+    *out = RtValue::boolean(equal);
 }
 
 #[cfg(test)]
@@ -295,49 +350,86 @@ mod tests {
     /// stack takes this lock first, serializing them against each other.
     static TEST_HEAP_LOCK: Mutex<()> = Mutex::new(());
 
+    unsafe fn make_string(text: &str) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_make_string(&mut out, text.as_ptr(), text.len());
+        out
+    }
+
+    unsafe fn make_array(elements: &[RtValue]) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_make_array(&mut out, elements.as_ptr(), elements.len());
+        out
+    }
+
+    unsafe fn array_get(array: RtValue, index: RtValue) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_array_get(&mut out, &array, &index);
+        out
+    }
+
+    unsafe fn array_set(array: RtValue, index: RtValue, value: RtValue) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_array_set(&mut out, &array, &index, &value);
+        out
+    }
+
+    unsafe fn values_equal(a: RtValue, b: RtValue) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_values_equal(&mut out, &a, &b);
+        out
+    }
+
     #[test]
     fn prints_a_number_and_a_string() {
-        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(format_value(RtValue::number(42)), "42");
-        let string_value = unsafe { druk_rt_make_string(b"hi".as_ptr(), 2) };
+        let string_value = unsafe { make_string("hi") };
         assert_eq!(format_value(string_value), "hi");
     }
 
     #[test]
     fn builds_and_indexes_an_array() {
-        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let elements = [
             RtValue::number(10),
             RtValue::number(20),
             RtValue::number(30),
         ];
-        let array = unsafe { druk_rt_make_array(elements.as_ptr(), elements.len()) };
-        let got = druk_rt_array_get(array, RtValue::number(1));
+        let array = unsafe { make_array(&elements) };
+        let got = unsafe { array_get(array, RtValue::number(1)) };
         assert_eq!(got.tag, TAG_NUMBER);
         assert_eq!(got.payload, 20);
     }
 
     #[test]
     fn array_set_writes_through() {
-        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let elements = [RtValue::number(1), RtValue::number(2)];
-        let array = unsafe { druk_rt_make_array(elements.as_ptr(), elements.len()) };
-        druk_rt_array_set(array, RtValue::number(1), RtValue::number(99));
-        let got = druk_rt_array_get(array, RtValue::number(1));
+        let array = unsafe { make_array(&elements) };
+        unsafe { array_set(array, RtValue::number(1), RtValue::number(99)) };
+        let got = unsafe { array_get(array, RtValue::number(1)) };
         assert_eq!(got.payload, 99);
     }
 
     #[test]
     fn collection_triggered_by_unrelated_allocations_spares_a_rooted_local() {
-        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        let kept = unsafe { druk_rt_make_string(b"kept".as_ptr(), 4) };
+        let kept = unsafe { make_string("kept") };
         let frame = [kept];
         unsafe { druk_rt_push_frame(frame.as_ptr(), frame.len() as i64) };
 
         for i in 0..300 {
-            let garbage = format!("garbage{i}");
-            unsafe { druk_rt_make_string(garbage.as_bytes().as_ptr(), garbage.len()) };
+            unsafe { make_string(&format!("garbage{i}")) };
         }
 
         assert_eq!(format_value(kept), "kept");
@@ -346,7 +438,9 @@ mod tests {
 
     #[test]
     fn pending_siblings_buffer_protects_earlier_values_during_later_allocations() {
-        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // Mirrors what `druk-codegen-llvm`'s `compile_rooted_siblings` emits
         // for something like an array literal `["first", noisy(), ...]`: a
@@ -356,12 +450,11 @@ mod tests {
         let mut pending = [RtValue::nil(), RtValue::nil()];
         unsafe { druk_rt_push_frame(pending.as_ptr(), pending.len() as i64) };
 
-        pending[0] = unsafe { druk_rt_make_string(b"first".as_ptr(), 5) };
+        pending[0] = unsafe { make_string("first") };
         let first = pending[0];
 
         for i in 0..300 {
-            let garbage = format!("garbage{i}");
-            pending[1] = unsafe { druk_rt_make_string(garbage.as_bytes().as_ptr(), garbage.len()) };
+            pending[1] = unsafe { make_string(&format!("garbage{i}")) };
         }
 
         assert_eq!(format_value(first), "first");
@@ -370,12 +463,14 @@ mod tests {
 
     #[test]
     fn values_equal_compares_strings_by_content_and_numbers_by_payload() {
-        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let a = unsafe { druk_rt_make_string(b"same".as_ptr(), 4) };
-        let b = unsafe { druk_rt_make_string(b"same".as_ptr(), 4) };
-        assert!(druk_rt_values_equal(a, b).is_truthy());
-        assert!(druk_rt_values_equal(RtValue::number(5), RtValue::number(5)).is_truthy());
-        assert!(!druk_rt_values_equal(RtValue::number(5), RtValue::number(6)).is_truthy());
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let a = unsafe { make_string("same") };
+        let b = unsafe { make_string("same") };
+        assert!(unsafe { values_equal(a, b) }.is_truthy());
+        assert!(unsafe { values_equal(RtValue::number(5), RtValue::number(5)) }.is_truthy());
+        assert!(!unsafe { values_equal(RtValue::number(5), RtValue::number(6)) }.is_truthy());
     }
 
     #[test]
@@ -389,7 +484,7 @@ mod tests {
 
     #[test]
     fn is_truthy_extern_matches_the_method() {
-        assert_eq!(druk_rt_is_truthy(RtValue::nil()), 0);
-        assert_eq!(druk_rt_is_truthy(RtValue::number(7)), 1);
+        assert_eq!(unsafe { druk_rt_is_truthy(&RtValue::nil()) }, 0);
+        assert_eq!(unsafe { druk_rt_is_truthy(&RtValue::number(7)) }, 1);
     }
 }

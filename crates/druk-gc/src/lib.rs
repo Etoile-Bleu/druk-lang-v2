@@ -339,6 +339,9 @@ mod tests {
         assert!(heap.should_collect());
 
         heap.collect(&[]);
-        assert!(!heap.should_collect(), "an empty heap should not be due again right after collecting");
+        assert!(
+            !heap.should_collect(),
+            "an empty heap should not be due again right after collecting"
+        );
     }
 }
