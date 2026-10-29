@@ -29,6 +29,21 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Free disk space (Linux)
+        # The full LLVM release tarball ships static libs for every backend
+        # (several GB uncompressed) and ubuntu-latest's default disk doesn't
+        # have room for that on top of what's preinstalled.
+        if: runner.os == 'Linux'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
       - name: Cache LLVM
         id: cache-llvm
         uses: actions/cache@v4
@@ -46,13 +61,17 @@ jobs:
           tar -xf /tmp/llvm.tar.xz -C "${{ runner.temp }}/llvm" --strip-components=1
 
       - name: Download LLVM (Windows)
+        # Native curl.exe/tar.exe, not Git Bash's MSYS tar: runner.temp is a
+        # backslash-separated native Windows path ("D:\a\_temp"), which MSYS
+        # tools misparse as an escape sequence rather than a drive letter.
         if: runner.os == 'Windows' && steps.cache-llvm.outputs.cache-hit != 'true'
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p "${{ runner.temp }}/llvm"
-          curl -fsSL -o /tmp/llvm.tar.xz \
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\llvm" | Out-Null
+          $archive = Join-Path $env:TEMP 'llvm.tar.xz'
+          curl.exe -fsSL -o $archive `
             "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VERSION }}/clang+llvm-${{ env.LLVM_VERSION }}-x86_64-pc-windows-msvc.tar.xz"
-          tar -xf /tmp/llvm.tar.xz -C "${{ runner.temp }}/llvm" --strip-components=1
+          tar.exe -xf $archive -C "${{ runner.temp }}\llvm" --strip-components=1
 
       - name: Set up MSVC dev environment (Windows)
         if: runner.os == 'Windows'
