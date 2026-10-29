@@ -188,6 +188,9 @@ dependencies = [
 [[package]]
 name = "druk-gc"
 version = "0.1.0"
+dependencies = [
+ "druk-diagnostics",
+]
 
 [[package]]
 name = "druk-hir"
