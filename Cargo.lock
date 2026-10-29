@@ -255,6 +255,7 @@ dependencies = [
 name = "druk-runtime"
 version = "0.1.0"
 dependencies = [
+ "druk-diagnostics",
  "druk-gc",
 ]
 
