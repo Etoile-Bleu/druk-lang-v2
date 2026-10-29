@@ -8,3 +8,4 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+druk-diagnostics = { workspace = true }
