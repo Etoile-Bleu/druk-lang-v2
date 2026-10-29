@@ -10,6 +10,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
+use druk_diagnostics::ice;
 use druk_gc::{handle_from_raw_index, Heap, Value};
 
 pub const TAG_NIL: i64 = 0;
@@ -100,6 +101,76 @@ fn heap() -> &'static Mutex<Heap> {
     HEAP.get_or_init(|| Mutex::new(Heap::new()))
 }
 
+/// Every currently active root buffer, as `(pointer, element count)`,
+/// registered by [`druk_rt_push_frame`] and unregistered by
+/// [`druk_rt_pop_frame`]. This is the GC's root set, and it covers two kinds
+/// of buffer, both pushed/popped the same way:
+///
+/// - A function's locals array, pushed once right after it's set up and
+///   popped immediately before every one of that function's return points,
+///   so at any moment this holds the locals of every frame currently on the
+///   call stack, including recursive calls.
+/// - A "pending siblings" buffer (`druk-codegen-llvm`'s
+///   `compile_rooted_siblings`) spanning the evaluation of a list of
+///   sub-expressions that are each computed before any of them is consumed
+///   — an array literal's elements, a call's arguments, a binary
+///   expression's operands — so a later sibling's own allocation can't
+///   collect an earlier one that was never stored into a named local.
+static FRAME_STACK: OnceLock<Mutex<Vec<(usize, usize)>>> = OnceLock::new();
+
+fn frame_stack() -> &'static Mutex<Vec<(usize, usize)>> {
+    FRAME_STACK.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// # Safety
+/// `ptr` must stay valid for exactly as long as this frame is registered.
+/// Codegen only ever passes a pointer to the current function's own locals
+/// array (a stack alloca) and calls [`druk_rt_pop_frame`] immediately before
+/// every one of that function's return points, so the pointer outlives its
+/// registration.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_push_frame(ptr: *const RtValue, count: i64) {
+    let mut guard = frame_stack()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.push((ptr as usize, count as usize));
+}
+
+#[no_mangle]
+pub extern "C" fn druk_rt_pop_frame() {
+    let mut guard = frame_stack()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.pop().is_none() {
+        ice!("druk_rt_pop_frame called with no matching druk_rt_push_frame");
+    }
+}
+
+/// Flattens every registered frame's locals, plus `extra` (values about to
+/// be stored into the object a caller is in the middle of allocating, which
+/// otherwise wouldn't be reachable from any frame yet), into one root list
+/// for [`Heap::collect`].
+fn gather_roots(extra: &[Value]) -> Vec<Value> {
+    let frames = frame_stack()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut roots = Vec::new();
+    for &(ptr, count) in frames.iter() {
+        // SAFETY: see `FRAME_STACK`'s doc comment — every registered frame's
+        // pointer is still valid for exactly `count` `RtValue`s.
+        let slice = unsafe { std::slice::from_raw_parts(ptr as *const RtValue, count) };
+        roots.extend(slice.iter().map(|value| value.to_value()));
+    }
+    roots.extend_from_slice(extra);
+    roots
+}
+
+fn maybe_collect(heap: &mut Heap, extra_roots: &[Value]) {
+    if heap.should_collect() {
+        heap.collect(&gather_roots(extra_roots));
+    }
+}
+
 fn format_value(value: RtValue) -> String {
     match value.tag {
         TAG_NIL => "nil".to_string(),
@@ -141,6 +212,7 @@ pub unsafe extern "C" fn druk_rt_make_string(bytes: *const u8, len: usize) -> Rt
     let mut guard = heap()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    maybe_collect(&mut guard, &[]);
     let handle = guard.alloc_string(owned);
     RtValue {
         tag: TAG_STR,
@@ -159,6 +231,7 @@ pub unsafe extern "C" fn druk_rt_make_array(elements: *const RtValue, len: usize
     let mut guard = heap()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    maybe_collect(&mut guard, &values);
     let handle = guard.alloc_array(values);
     RtValue {
         tag: TAG_ARRAY,
@@ -214,8 +287,17 @@ pub extern "C" fn druk_rt_values_equal(a: RtValue, b: RtValue) -> RtValue {
 mod tests {
     use super::*;
 
+    /// `HEAP` and `FRAME_STACK` are process-wide statics shared by every
+    /// test in this binary, and now that `Heap::collect` actually reclaims
+    /// memory, two of these tests running concurrently on different threads
+    /// (the default `cargo test` behavior) could collect an object another
+    /// test is still using. Every test that touches the heap or the frame
+    /// stack takes this lock first, serializing them against each other.
+    static TEST_HEAP_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn prints_a_number_and_a_string() {
+        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(format_value(RtValue::number(42)), "42");
         let string_value = unsafe { druk_rt_make_string(b"hi".as_ptr(), 2) };
         assert_eq!(format_value(string_value), "hi");
@@ -223,6 +305,7 @@ mod tests {
 
     #[test]
     fn builds_and_indexes_an_array() {
+        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let elements = [
             RtValue::number(10),
             RtValue::number(20),
@@ -236,6 +319,7 @@ mod tests {
 
     #[test]
     fn array_set_writes_through() {
+        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let elements = [RtValue::number(1), RtValue::number(2)];
         let array = unsafe { druk_rt_make_array(elements.as_ptr(), elements.len()) };
         druk_rt_array_set(array, RtValue::number(1), RtValue::number(99));
@@ -244,7 +328,49 @@ mod tests {
     }
 
     #[test]
+    fn collection_triggered_by_unrelated_allocations_spares_a_rooted_local() {
+        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let kept = unsafe { druk_rt_make_string(b"kept".as_ptr(), 4) };
+        let frame = [kept];
+        unsafe { druk_rt_push_frame(frame.as_ptr(), frame.len() as i64) };
+
+        for i in 0..300 {
+            let garbage = format!("garbage{i}");
+            unsafe { druk_rt_make_string(garbage.as_bytes().as_ptr(), garbage.len()) };
+        }
+
+        assert_eq!(format_value(kept), "kept");
+        druk_rt_pop_frame();
+    }
+
+    #[test]
+    fn pending_siblings_buffer_protects_earlier_values_during_later_allocations() {
+        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Mirrors what `druk-codegen-llvm`'s `compile_rooted_siblings` emits
+        // for something like an array literal `["first", noisy(), ...]`: a
+        // buffer holding every sibling evaluated so far, registered as a
+        // frame for the whole span, with each slot nil until its own value
+        // is computed and stored into it.
+        let mut pending = [RtValue::nil(), RtValue::nil()];
+        unsafe { druk_rt_push_frame(pending.as_ptr(), pending.len() as i64) };
+
+        pending[0] = unsafe { druk_rt_make_string(b"first".as_ptr(), 5) };
+        let first = pending[0];
+
+        for i in 0..300 {
+            let garbage = format!("garbage{i}");
+            pending[1] = unsafe { druk_rt_make_string(garbage.as_bytes().as_ptr(), garbage.len()) };
+        }
+
+        assert_eq!(format_value(first), "first");
+        druk_rt_pop_frame();
+    }
+
+    #[test]
     fn values_equal_compares_strings_by_content_and_numbers_by_payload() {
+        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let a = unsafe { druk_rt_make_string(b"same".as_ptr(), 4) };
         let b = unsafe { druk_rt_make_string(b"same".as_ptr(), 4) };
         assert!(druk_rt_values_equal(a, b).is_truthy());
