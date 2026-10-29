@@ -2,7 +2,7 @@ use inkwell::attributes::AttributeLoc;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::types::StructType;
+use inkwell::types::{ArrayType, StructType};
 use inkwell::values::{
     BasicMetadataValueEnum, CallSiteValue, FunctionValue, IntValue, PointerValue, StructValue,
     ValueKind,
@@ -37,7 +37,13 @@ pub(crate) struct CodeGen<'ctx> {
     pub(crate) value_ty: StructType<'ctx>,
     pub(crate) runtime: RuntimeFns<'ctx>,
     pub(crate) functions: Vec<FunctionValue<'ctx>>,
-    pub(crate) locals: Vec<PointerValue<'ctx>>,
+    /// The current function's locals, as one contiguous `alloca` array
+    /// rather than a separate `alloca` per slot, so its pointer and length
+    /// can be handed to `druk_rt_push_frame` as the GC's root set for this
+    /// frame. `None` outside of `compile_function` (there is no "current
+    /// function" between top-level calls).
+    pub(crate) locals_ptr: Option<PointerValue<'ctx>>,
+    pub(crate) locals_ty: Option<ArrayType<'ctx>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -73,6 +79,56 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn extract_payload(&self, value: StructValue<'ctx>) -> IntValue<'ctx> {
         unwrap_build(self.builder.build_extract_value(value, 1, "payload")).into_int_value()
+    }
+
+    /// Points at local slot `slot` inside the current function's locals
+    /// array. Only valid between `compile_function` allocating that array
+    /// and returning from it.
+    fn local_ptr(&self, slot: u32) -> PointerValue<'ctx> {
+        let ptr = self
+            .locals_ptr
+            .unwrap_or_else(|| ice!("local slot accessed outside of compile_function"));
+        let ty = self
+            .locals_ty
+            .unwrap_or_else(|| ice!("local slot accessed outside of compile_function"));
+        let i32_ty = self.context.i32_type();
+        // SAFETY: `slot` is always below the `locals_count` druk-ir assigned
+        // this function, the same bound `ty`'s array length was created
+        // with, so the GEP stays within `ptr`'s allocation.
+        unsafe {
+            unwrap_build(self.builder.build_gep(
+                ty,
+                ptr,
+                &[i32_ty.const_zero(), i32_ty.const_int(slot as u64, false)],
+                "local_ptr",
+            ))
+        }
+    }
+
+    /// Registers the current function's locals array as a GC root set for
+    /// the duration of this call — see `druk_rt_push_frame`'s doc comment in
+    /// `druk-runtime` for why this, rather than scanning the native stack,
+    /// is how Druk's collector finds live locals across (including
+    /// recursive) calls.
+    fn push_frame(&self, locals_count: u32) {
+        let ptr = self
+            .locals_ptr
+            .unwrap_or_else(|| ice!("push_frame called outside of compile_function"));
+        let count = self.context.i64_type().const_int(locals_count as u64, false);
+        unwrap_build(self.builder.build_call(
+            self.runtime.push_frame,
+            &[ptr.into(), count.into()],
+            "call_push_frame",
+        ));
+    }
+
+    /// Unregisters the current function's locals, emitted right before
+    /// every return point so a popped frame never outlives its call.
+    fn pop_frame(&self) {
+        unwrap_build(
+            self.builder
+                .build_call(self.runtime.pop_frame, &[], "call_pop_frame"),
+        );
     }
 
     /// Writes `value` into a fresh stack slot and returns a pointer to it,
@@ -147,26 +203,26 @@ impl<'ctx> CodeGen<'ctx> {
         let entry = self.context.append_basic_block(function_value, "entry");
         self.builder.position_at_end(entry);
 
-        self.locals = Vec::with_capacity(locals_count as *const () as usize);
-        for slot in 0..locals_count {
-            let alloca = unwrap_build(
-                self.builder
-                    .build_alloca(self.value_ty, &format!("local{slot}")),
-            );
-            self.locals.push(alloca);
-        }
+        let locals_ty = self.value_ty.array_type(locals_count);
+        let locals_ptr = unwrap_build(self.builder.build_alloca(locals_ty, "locals"));
+        self.locals_ptr = Some(locals_ptr);
+        self.locals_ty = Some(locals_ty);
+
         for index in 0..arity {
             let param = function_value
                 .get_nth_param(index as u32)
                 .unwrap_or_else(|| ice!("function is missing declared parameter {index}"));
-            unwrap_build(self.builder.build_store(self.locals[index], param));
+            let ptr = self.local_ptr(index as u32);
+            unwrap_build(self.builder.build_store(ptr, param));
         }
+        self.push_frame(locals_count);
 
         for stmt in body {
             self.compile_stmt(stmt, function_value)?;
         }
 
         if !self.is_terminated() {
+            self.pop_frame();
             if is_main {
                 unwrap_build(self.builder.build_return(None));
             } else {
@@ -205,6 +261,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Some(expr) => self.compile_expr(expr, function)?,
                     None => self.const_value(TAG_NIL, 0),
                 };
+                self.pop_frame();
                 unwrap_build(self.builder.build_return(Some(&result)));
             }
             IrStmt::Block(stmts) => {
@@ -305,13 +362,13 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::ConstStr(value) => self.compile_string_literal(value),
             IrExpr::FunctionRef(fid) => self.compile_function_ref(*fid),
             IrExpr::GetLocal(slot) => {
-                let ptr = self.locals[*slot as usize];
+                let ptr = self.local_ptr(*slot);
                 unwrap_build(self.builder.build_load(self.value_ty, ptr, "load_local"))
                     .into_struct_value()
             }
             IrExpr::SetLocal(slot, value_expr) => {
                 let value = self.compile_expr(value_expr, function)?;
-                let ptr = self.locals[*slot as usize];
+                let ptr = self.local_ptr(*slot);
                 unwrap_build(self.builder.build_store(ptr, value));
                 value
             }
