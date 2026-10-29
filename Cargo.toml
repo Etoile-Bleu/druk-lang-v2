@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/druk-diagnostics",
+    "crates/druk-lexer",
+    "crates/druk-ast",
+    "crates/druk-parser",
+    "crates/druk-hir",
+    "crates/druk-ir",
+    "crates/druk-codegen-llvm",
+    "crates/druk-gc",
+    "crates/druk-runtime",
+    "crates/druk-driver",
+    "crates/druk",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Etoile-Bleu/druk-lang-v2"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[workspace.dependencies]
+druk-diagnostics = { path = "crates/druk-diagnostics" }
+druk-lexer = { path = "crates/druk-lexer" }
+druk-ast = { path = "crates/druk-ast" }
+druk-parser = { path = "crates/druk-parser" }
+druk-hir = { path = "crates/druk-hir" }
+druk-ir = { path = "crates/druk-ir" }
+druk-codegen-llvm = { path = "crates/druk-codegen-llvm" }
+druk-gc = { path = "crates/druk-gc" }
+druk-runtime = { path = "crates/druk-runtime" }
+druk-driver = { path = "crates/druk-driver" }
+
+thiserror = "2"
+ariadne = "0.5"
+logos = "0.15"
+clap = { version = "4", features = ["derive"] }
+insta = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
