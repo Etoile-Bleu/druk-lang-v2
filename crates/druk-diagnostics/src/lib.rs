@@ -5,6 +5,24 @@ use ariadne::{Color, Config, IndexType, Label as AriadneLabel, Report, ReportKin
 
 pub type Span = Range<usize>;
 
+/// The one sanctioned panic path in the compiler — see
+/// `DrukCompiler/ErrorHandling.md`. Called only through the [`ice`] macro,
+/// never directly.
+#[allow(clippy::panic)]
+pub fn report_ice(message: String) -> ! {
+    panic!("internal compiler error: {message}")
+}
+
+/// Marks an internal compiler error: an invariant an earlier pass should
+/// have guaranteed was violated, as opposed to a problem in the user's Druk
+/// source (which is always a [`Diagnostic`], never a panic).
+#[macro_export]
+macro_rules! ice {
+    ($($arg:tt)*) => {
+        $crate::report_ice(format!($($arg)*))
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
