@@ -1,4 +1,3 @@
-use inkwell::attributes::AttributeLoc;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -131,11 +130,10 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn pop_temp_frame(&self) {
-        unwrap_build(self.builder.build_call(
-            self.runtime.pop_frame,
-            &[],
-            "call_pop_temp_frame",
-        ));
+        unwrap_build(
+            self.builder
+                .build_call(self.runtime.pop_frame, &[], "call_pop_temp_frame"),
+        );
     }
 
     /// Evaluates every expression in `exprs`, left to right, keeping each
@@ -197,7 +195,10 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr = self
             .locals_ptr
             .unwrap_or_else(|| ice!("push_frame called outside of compile_function"));
-        let count = self.context.i64_type().const_int(locals_count as u64, false);
+        let count = self
+            .context
+            .i64_type()
+            .const_int(locals_count as u64, false);
         unwrap_build(self.builder.build_call(
             self.runtime.push_frame,
             &[ptr.into(), count.into()],
@@ -215,21 +216,22 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     /// Writes `value` into a fresh stack slot and returns a pointer to it,
-    /// for passing as a `byval` argument — see `RuntimeFns::declare`.
-    fn byval_ptr(&self, value: StructValue<'ctx>) -> PointerValue<'ctx> {
-        let slot = unwrap_build(self.builder.build_alloca(self.value_ty, "byval_tmp"));
+    /// for passing a runtime function an `RtValue` argument — see the
+    /// `druk_runtime` module doc comment for why every `RtValue` crosses
+    /// this FFI boundary through a pointer rather than by value.
+    fn value_ptr(&self, value: StructValue<'ctx>) -> PointerValue<'ctx> {
+        let slot = unwrap_build(self.builder.build_alloca(self.value_ty, "value_tmp"));
         unwrap_build(self.builder.build_store(slot, value));
         slot
     }
 
     fn is_truthy(&self, value: StructValue<'ctx>) -> IntValue<'ctx> {
-        let ptr = self.byval_ptr(value);
+        let ptr = self.value_ptr(value);
         let call = unwrap_build(self.builder.build_call(
             self.runtime.is_truthy,
             &[ptr.into()],
             "call_is_truthy",
         ));
-        call.add_attribute(AttributeLoc::Param(0), self.runtime.byval_attr);
         let raw = match call.try_as_basic_value() {
             ValueKind::Basic(value) => value.into_int_value(),
             ValueKind::Instruction(_) => ice!("druk_rt_is_truthy unexpectedly returned void"),
@@ -250,29 +252,23 @@ impl<'ctx> CodeGen<'ctx> {
         self.make_value_from_int(TAG_BOOL, extended)
     }
 
-    /// Calls an `RtValue`-returning runtime function through the `sret`
-    /// convention `RuntimeFns::declare` set it up with: allocate a slot for
-    /// the callee to write into, pass its pointer as the hidden leading
-    /// argument, then load the result back out. `byval_positions` names
-    /// which of the already-assembled `args` (1-indexed, after the sret
-    /// slot) are themselves `byval` pointers needing that attribute at the
-    /// call site, not plain pointer/integer arguments.
-    fn call_with_sret(
+    /// Calls an `RtValue`-producing runtime function: allocate a slot for
+    /// the callee to write its result into, pass its pointer as the leading
+    /// argument, then load the result back out. `args` are the rest of the
+    /// callee's parameters, already assembled by the caller (themselves
+    /// plain integers or pointers from `value_ptr`, never a struct passed
+    /// by value — see the `druk_runtime` module doc comment).
+    fn call_with_out_param(
         &self,
         function: FunctionValue<'ctx>,
         args: &[BasicMetadataValueEnum<'ctx>],
-        byval_positions: &[u32],
         name: &str,
     ) -> StructValue<'ctx> {
-        let out = unwrap_build(self.builder.build_alloca(self.value_ty, "sret_out"));
+        let out = unwrap_build(self.builder.build_alloca(self.value_ty, "out"));
         let mut full_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![out.into()];
         full_args.extend_from_slice(args);
-        let call = unwrap_build(self.builder.build_call(function, &full_args, name));
-        call.add_attribute(AttributeLoc::Param(0), self.runtime.sret_attr);
-        for &position in byval_positions {
-            call.add_attribute(AttributeLoc::Param(position), self.runtime.byval_attr);
-        }
-        unwrap_build(self.builder.build_load(self.value_ty, out, "sret_load")).into_struct_value()
+        unwrap_build(self.builder.build_call(function, &full_args, name));
+        unwrap_build(self.builder.build_load(self.value_ty, out, "out_load")).into_struct_value()
     }
 
     pub(crate) fn compile_function(
@@ -331,13 +327,12 @@ impl<'ctx> CodeGen<'ctx> {
             }
             IrStmt::Print(expr) => {
                 let value = self.compile_expr(expr, function)?;
-                let ptr = self.byval_ptr(value);
-                let call = unwrap_build(self.builder.build_call(
+                let ptr = self.value_ptr(value);
+                unwrap_build(self.builder.build_call(
                     self.runtime.print,
                     &[ptr.into()],
                     "call_print",
                 ));
-                call.add_attribute(AttributeLoc::Param(0), self.runtime.byval_attr);
             }
             IrStmt::Return(value) => {
                 let result = match value {
@@ -462,12 +457,11 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::ArrayGet(object, index) => {
                 let operands =
                     self.compile_rooted_siblings(&[object.as_ref(), index.as_ref()], function)?;
-                let object_ptr = self.byval_ptr(operands[0]);
-                let index_ptr = self.byval_ptr(operands[1]);
-                self.call_with_sret(
+                let object_ptr = self.value_ptr(operands[0]);
+                let index_ptr = self.value_ptr(operands[1]);
+                self.call_with_out_param(
                     self.runtime.array_get,
                     &[object_ptr.into(), index_ptr.into()],
-                    &[1, 2],
                     "call_array_get",
                 )
             }
@@ -476,13 +470,12 @@ impl<'ctx> CodeGen<'ctx> {
                     &[object.as_ref(), index.as_ref(), value.as_ref()],
                     function,
                 )?;
-                let object_ptr = self.byval_ptr(operands[0]);
-                let index_ptr = self.byval_ptr(operands[1]);
-                let value_ptr = self.byval_ptr(operands[2]);
-                self.call_with_sret(
+                let object_ptr = self.value_ptr(operands[0]);
+                let index_ptr = self.value_ptr(operands[1]);
+                let value_ptr = self.value_ptr(operands[2]);
+                self.call_with_out_param(
                     self.runtime.array_set,
                     &[object_ptr.into(), index_ptr.into(), value_ptr.into()],
-                    &[1, 2, 3],
                     "call_array_set",
                 )
             }
@@ -493,10 +486,9 @@ impl<'ctx> CodeGen<'ctx> {
         let global = unwrap_build(self.builder.build_global_string_ptr(value, "str_lit"));
         let ptr = global.as_pointer_value();
         let len = self.context.i64_type().const_int(value.len() as u64, false);
-        self.call_with_sret(
+        self.call_with_out_param(
             self.runtime.make_string,
             &[ptr.into(), len.into()],
-            &[],
             "call_make_string",
         )
     }
@@ -544,22 +536,20 @@ impl<'ctx> CodeGen<'ctx> {
 
         Ok(match op {
             BinOp::Eq => {
-                let lhs_ptr = self.byval_ptr(lhs_value);
-                let rhs_ptr = self.byval_ptr(rhs_value);
-                self.call_with_sret(
+                let lhs_ptr = self.value_ptr(lhs_value);
+                let rhs_ptr = self.value_ptr(rhs_value);
+                self.call_with_out_param(
                     self.runtime.values_equal,
                     &[lhs_ptr.into(), rhs_ptr.into()],
-                    &[1, 2],
                     "call_values_equal",
                 )
             }
             BinOp::NotEq => {
-                let lhs_ptr = self.byval_ptr(lhs_value);
-                let rhs_ptr = self.byval_ptr(rhs_value);
-                let result = self.call_with_sret(
+                let lhs_ptr = self.value_ptr(lhs_value);
+                let rhs_ptr = self.value_ptr(rhs_value);
+                let result = self.call_with_out_param(
                     self.runtime.values_equal,
                     &[lhs_ptr.into(), rhs_ptr.into()],
-                    &[1, 2],
                     "call_values_equal",
                 );
                 let equal = self.extract_payload(result);
@@ -687,10 +677,9 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let len_value = self.context.i64_type().const_int(len as u64, false);
-        Ok(self.call_with_sret(
+        Ok(self.call_with_out_param(
             self.runtime.make_array,
             &[buffer.into(), len_value.into()],
-            &[],
             "call_make_array",
         ))
     }
