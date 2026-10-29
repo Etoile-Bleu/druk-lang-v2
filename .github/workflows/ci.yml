@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "feat/**", "fix/**", "refactor/**", "chore/**", "docs/**", "test/**", "build/**", "ci/**"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  LLVM_VERSION: 22.1.0-rc3
+
+jobs:
+  ci:
+    name: CI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache LLVM
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}
+
+      - name: Download LLVM (Linux)
+        if: runner.os == 'Linux' && steps.cache-llvm.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/llvm"
+          curl -fsSL -o /tmp/llvm.tar.xz \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VERSION }}/LLVM-${{ env.LLVM_VERSION }}-Linux-X64.tar.xz"
+          tar -xf /tmp/llvm.tar.xz -C "${{ runner.temp }}/llvm" --strip-components=1
+
+      - name: Download LLVM (Windows)
+        if: runner.os == 'Windows' && steps.cache-llvm.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/llvm"
+          curl -fsSL -o /tmp/llvm.tar.xz \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ env.LLVM_VERSION }}/clang+llvm-${{ env.LLVM_VERSION }}-x86_64-pc-windows-msvc.tar.xz"
+          tar -xf /tmp/llvm.tar.xz -C "${{ runner.temp }}/llvm" --strip-components=1
+
+      - name: Set up MSVC dev environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build xml2s.lib stub (Windows)
+        # Some prebuilt LLVM archives list xml2s.lib as a system dependency
+        # via `llvm-config --system-libs` without actually shipping it, which
+        # fails the final link step with LNK1181. See README.md for the
+        # background; this builds an empty stub library the linker accepts
+        # instead.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\llvm-stub-libs" | Out-Null
+          Set-Location "${{ runner.temp }}\llvm-stub-libs"
+          "" | Out-File -Encoding ascii empty.c
+          cl.exe /c empty.c
+          lib.exe /OUT:xml2s.lib empty.obj
+
+      - name: Set LLVM environment (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}/llvm" >> "$GITHUB_ENV"
+
+      - name: Set LLVM environment (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}\\llvm" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=-L ${{ runner.temp }}\\llvm-stub-libs" >> "$GITHUB_ENV"
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
