@@ -1,0 +1,570 @@
+use inkwell::attributes::AttributeLoc;
+use inkwell::basic_block::BasicBlock;
+use inkwell::builder::Builder;
+use inkwell::context::Context;
+use inkwell::types::StructType;
+use inkwell::values::{
+    BasicMetadataValueEnum, CallSiteValue, FunctionValue, IntValue, PointerValue, StructValue,
+    ValueKind,
+};
+use inkwell::{AddressSpace, IntPredicate};
+
+use druk_diagnostics::{ice, Diagnostic};
+use druk_ir::{BinOp, FunctionId, IrExpr, IrStmt, UnOp};
+use druk_runtime::{TAG_BOOL, TAG_FUNCTION, TAG_NIL, TAG_NUMBER};
+
+use crate::runtime_fns::RuntimeFns;
+
+fn unwrap_build<T>(result: Result<T, inkwell::builder::BuilderError>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => ice!("LLVM builder call failed: {err}"),
+    }
+}
+
+fn call_result(call: CallSiteValue<'_>) -> StructValue<'_> {
+    match call.try_as_basic_value() {
+        ValueKind::Basic(value) => value.into_struct_value(),
+        ValueKind::Instruction(_) => {
+            ice!("a runtime call that should return a value returned void")
+        }
+    }
+}
+
+pub(crate) struct CodeGen<'ctx> {
+    pub(crate) context: &'ctx Context,
+    pub(crate) builder: &'ctx Builder<'ctx>,
+    pub(crate) value_ty: StructType<'ctx>,
+    pub(crate) runtime: RuntimeFns<'ctx>,
+    pub(crate) functions: Vec<FunctionValue<'ctx>>,
+    pub(crate) locals: Vec<PointerValue<'ctx>>,
+}
+
+impl<'ctx> CodeGen<'ctx> {
+    fn is_terminated(&self) -> bool {
+        self.builder
+            .get_insert_block()
+            .and_then(BasicBlock::get_terminator)
+            .is_some()
+    }
+
+    fn const_value(&self, tag: i64, payload: i64) -> StructValue<'ctx> {
+        let i64_t = self.context.i64_type();
+        self.value_ty.const_named_struct(&[
+            i64_t.const_int(tag as u64, true).into(),
+            i64_t.const_int(payload as u64, true).into(),
+        ])
+    }
+
+    fn make_value_from_int(&self, tag: i64, payload: IntValue<'ctx>) -> StructValue<'ctx> {
+        let tag_value = self.context.i64_type().const_int(tag as u64, true);
+        let undef = self.value_ty.get_undef();
+        let with_tag = unwrap_build(
+            self.builder
+                .build_insert_value(undef, tag_value, 0, "with_tag"),
+        );
+        let with_payload =
+            unwrap_build(
+                self.builder
+                    .build_insert_value(with_tag, payload, 1, "with_payload"),
+            );
+        with_payload.into_struct_value()
+    }
+
+    fn extract_payload(&self, value: StructValue<'ctx>) -> IntValue<'ctx> {
+        unwrap_build(self.builder.build_extract_value(value, 1, "payload")).into_int_value()
+    }
+
+    /// Writes `value` into a fresh stack slot and returns a pointer to it,
+    /// for passing as a `byval` argument — see `RuntimeFns::declare`.
+    fn byval_ptr(&self, value: StructValue<'ctx>) -> PointerValue<'ctx> {
+        let slot = unwrap_build(self.builder.build_alloca(self.value_ty, "byval_tmp"));
+        unwrap_build(self.builder.build_store(slot, value));
+        slot
+    }
+
+    fn is_truthy(&self, value: StructValue<'ctx>) -> IntValue<'ctx> {
+        let ptr = self.byval_ptr(value);
+        let call = unwrap_build(self.builder.build_call(
+            self.runtime.is_truthy,
+            &[ptr.into()],
+            "call_is_truthy",
+        ));
+        call.add_attribute(AttributeLoc::Param(0), self.runtime.byval_attr);
+        let raw = match call.try_as_basic_value() {
+            ValueKind::Basic(value) => value.into_int_value(),
+            ValueKind::Instruction(_) => ice!("druk_rt_is_truthy unexpectedly returned void"),
+        };
+        let zero = self.context.i64_type().const_zero();
+        unwrap_build(
+            self.builder
+                .build_int_compare(IntPredicate::NE, raw, zero, "truthy"),
+        )
+    }
+
+    fn bool_to_tagged(&self, bit: IntValue<'ctx>) -> StructValue<'ctx> {
+        let extended = unwrap_build(self.builder.build_int_z_extend(
+            bit,
+            self.context.i64_type(),
+            "bool_ext",
+        ));
+        self.make_value_from_int(TAG_BOOL, extended)
+    }
+
+    /// Calls an `RtValue`-returning runtime function through the `sret`
+    /// convention `RuntimeFns::declare` set it up with: allocate a slot for
+    /// the callee to write into, pass its pointer as the hidden leading
+    /// argument, then load the result back out. `byval_positions` names
+    /// which of the already-assembled `args` (1-indexed, after the sret
+    /// slot) are themselves `byval` pointers needing that attribute at the
+    /// call site, not plain pointer/integer arguments.
+    fn call_with_sret(
+        &self,
+        function: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+        byval_positions: &[u32],
+        name: &str,
+    ) -> StructValue<'ctx> {
+        let out = unwrap_build(self.builder.build_alloca(self.value_ty, "sret_out"));
+        let mut full_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![out.into()];
+        full_args.extend_from_slice(args);
+        let call = unwrap_build(self.builder.build_call(function, &full_args, name));
+        call.add_attribute(AttributeLoc::Param(0), self.runtime.sret_attr);
+        for &position in byval_positions {
+            call.add_attribute(AttributeLoc::Param(position), self.runtime.byval_attr);
+        }
+        unwrap_build(self.builder.build_load(self.value_ty, out, "sret_load")).into_struct_value()
+    }
+
+    pub(crate) fn compile_function(
+        &mut self,
+        function_value: FunctionValue<'ctx>,
+        arity: usize,
+        locals_count: u32,
+        body: &[IrStmt],
+        is_main: bool,
+    ) -> Result<(), Diagnostic> {
+        let entry = self.context.append_basic_block(function_value, "entry");
+        self.builder.position_at_end(entry);
+
+        self.locals = Vec::with_capacity(locals_count as *const () as usize);
+        for slot in 0..locals_count {
+            let alloca = unwrap_build(
+                self.builder
+                    .build_alloca(self.value_ty, &format!("local{slot}")),
+            );
+            self.locals.push(alloca);
+        }
+        for index in 0..arity {
+            let param = function_value
+                .get_nth_param(index as u32)
+                .unwrap_or_else(|| ice!("function is missing declared parameter {index}"));
+            unwrap_build(self.builder.build_store(self.locals[index], param));
+        }
+
+        for stmt in body {
+            self.compile_stmt(stmt, function_value)?;
+        }
+
+        if !self.is_terminated() {
+            if is_main {
+                unwrap_build(self.builder.build_return(None));
+            } else {
+                let nil = self.const_value(TAG_NIL, 0);
+                unwrap_build(self.builder.build_return(Some(&nil)));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn compile_stmt(
+        &mut self,
+        stmt: &IrStmt,
+        function: FunctionValue<'ctx>,
+    ) -> Result<(), Diagnostic> {
+        if self.is_terminated() {
+            return Ok(());
+        }
+        match stmt {
+            IrStmt::Expr(expr) => {
+                self.compile_expr(expr, function)?;
+            }
+            IrStmt::Print(expr) => {
+                let value = self.compile_expr(expr, function)?;
+                let ptr = self.byval_ptr(value);
+                let call = unwrap_build(self.builder.build_call(
+                    self.runtime.print,
+                    &[ptr.into()],
+                    "call_print",
+                ));
+                call.add_attribute(AttributeLoc::Param(0), self.runtime.byval_attr);
+            }
+            IrStmt::Return(value) => {
+                let result = match value {
+                    Some(expr) => self.compile_expr(expr, function)?,
+                    None => self.const_value(TAG_NIL, 0),
+                };
+                unwrap_build(self.builder.build_return(Some(&result)));
+            }
+            IrStmt::Block(stmts) => {
+                for inner in stmts {
+                    self.compile_stmt(inner, function)?;
+                }
+            }
+            IrStmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => self.compile_if(cond, then_branch, else_branch, function)?,
+            IrStmt::While { cond, body } => self.compile_while(cond, body, function)?,
+        }
+        Ok(())
+    }
+
+    fn compile_if(
+        &mut self,
+        cond: &IrExpr,
+        then_branch: &[IrStmt],
+        else_branch: &[IrStmt],
+        function: FunctionValue<'ctx>,
+    ) -> Result<(), Diagnostic> {
+        let cond_value = self.compile_expr(cond, function)?;
+        let cond_bool = self.is_truthy(cond_value);
+
+        let then_bb = self.context.append_basic_block(function, "if.then");
+        let else_bb = self.context.append_basic_block(function, "if.else");
+        let merge_bb = self.context.append_basic_block(function, "if.merge");
+
+        unwrap_build(
+            self.builder
+                .build_conditional_branch(cond_bool, then_bb, else_bb),
+        );
+
+        self.builder.position_at_end(then_bb);
+        for stmt in then_branch {
+            self.compile_stmt(stmt, function)?;
+        }
+        if !self.is_terminated() {
+            unwrap_build(self.builder.build_unconditional_branch(merge_bb));
+        }
+
+        self.builder.position_at_end(else_bb);
+        for stmt in else_branch {
+            self.compile_stmt(stmt, function)?;
+        }
+        if !self.is_terminated() {
+            unwrap_build(self.builder.build_unconditional_branch(merge_bb));
+        }
+
+        self.builder.position_at_end(merge_bb);
+        Ok(())
+    }
+
+    fn compile_while(
+        &mut self,
+        cond: &IrExpr,
+        body: &[IrStmt],
+        function: FunctionValue<'ctx>,
+    ) -> Result<(), Diagnostic> {
+        let cond_bb = self.context.append_basic_block(function, "while.cond");
+        let body_bb = self.context.append_basic_block(function, "while.body");
+        let end_bb = self.context.append_basic_block(function, "while.end");
+
+        unwrap_build(self.builder.build_unconditional_branch(cond_bb));
+
+        self.builder.position_at_end(cond_bb);
+        let cond_value = self.compile_expr(cond, function)?;
+        let cond_bool = self.is_truthy(cond_value);
+        unwrap_build(
+            self.builder
+                .build_conditional_branch(cond_bool, body_bb, end_bb),
+        );
+
+        self.builder.position_at_end(body_bb);
+        for stmt in body {
+            self.compile_stmt(stmt, function)?;
+        }
+        if !self.is_terminated() {
+            unwrap_build(self.builder.build_unconditional_branch(cond_bb));
+        }
+
+        self.builder.position_at_end(end_bb);
+        Ok(())
+    }
+
+    fn compile_expr(
+        &mut self,
+        expr: &IrExpr,
+        function: FunctionValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, Diagnostic> {
+        Ok(match expr {
+            IrExpr::ConstInt(value) => self.const_value(TAG_NUMBER, *value),
+            IrExpr::ConstBool(value) => self.const_value(TAG_BOOL, *value as i64),
+            IrExpr::ConstNil => self.const_value(TAG_NIL, 0),
+            IrExpr::ConstStr(value) => self.compile_string_literal(value),
+            IrExpr::FunctionRef(fid) => self.compile_function_ref(*fid),
+            IrExpr::GetLocal(slot) => {
+                let ptr = self.locals[*slot as usize];
+                unwrap_build(self.builder.build_load(self.value_ty, ptr, "load_local"))
+                    .into_struct_value()
+            }
+            IrExpr::SetLocal(slot, value_expr) => {
+                let value = self.compile_expr(value_expr, function)?;
+                let ptr = self.locals[*slot as usize];
+                unwrap_build(self.builder.build_store(ptr, value));
+                value
+            }
+            IrExpr::Unary(op, operand) => self.compile_unary(*op, operand, function)?,
+            IrExpr::Binary(op, lhs, rhs) => self.compile_binary(*op, lhs, rhs, function)?,
+            IrExpr::Call(callee, args) => self.compile_call(callee, args, function)?,
+            IrExpr::ArrayLiteral(elements) => self.compile_array_literal(elements, function)?,
+            IrExpr::ArrayGet(object, index) => {
+                let object_value = self.compile_expr(object, function)?;
+                let index_value = self.compile_expr(index, function)?;
+                let object_ptr = self.byval_ptr(object_value);
+                let index_ptr = self.byval_ptr(index_value);
+                self.call_with_sret(
+                    self.runtime.array_get,
+                    &[object_ptr.into(), index_ptr.into()],
+                    &[1, 2],
+                    "call_array_get",
+                )
+            }
+            IrExpr::ArraySet(object, index, value) => {
+                let object_value = self.compile_expr(object, function)?;
+                let index_value = self.compile_expr(index, function)?;
+                let value_value = self.compile_expr(value, function)?;
+                let object_ptr = self.byval_ptr(object_value);
+                let index_ptr = self.byval_ptr(index_value);
+                let value_ptr = self.byval_ptr(value_value);
+                self.call_with_sret(
+                    self.runtime.array_set,
+                    &[object_ptr.into(), index_ptr.into(), value_ptr.into()],
+                    &[1, 2, 3],
+                    "call_array_set",
+                )
+            }
+        })
+    }
+
+    fn compile_string_literal(&self, value: &str) -> StructValue<'ctx> {
+        let global = unwrap_build(self.builder.build_global_string_ptr(value, "str_lit"));
+        let ptr = global.as_pointer_value();
+        let len = self.context.i64_type().const_int(value.len() as u64, false);
+        self.call_with_sret(
+            self.runtime.make_string,
+            &[ptr.into(), len.into()],
+            &[],
+            "call_make_string",
+        )
+    }
+
+    fn compile_function_ref(&self, fid: FunctionId) -> StructValue<'ctx> {
+        let function_value = self.functions[fid.0 as usize];
+        let ptr = function_value.as_global_value().as_pointer_value();
+        let int_ty = self.context.i64_type();
+        let as_int = unwrap_build(self.builder.build_ptr_to_int(ptr, int_ty, "fn_ptr_as_int"));
+        self.make_value_from_int(TAG_FUNCTION, as_int)
+    }
+
+    fn compile_unary(
+        &mut self,
+        op: UnOp,
+        operand: &IrExpr,
+        function: FunctionValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, Diagnostic> {
+        let value = self.compile_expr(operand, function)?;
+        Ok(match op {
+            UnOp::Negate => {
+                let payload = self.extract_payload(value);
+                let zero = self.context.i64_type().const_zero();
+                let negated = unwrap_build(self.builder.build_int_sub(zero, payload, "neg"));
+                self.make_value_from_int(TAG_NUMBER, negated)
+            }
+            UnOp::Not => {
+                let truthy = self.is_truthy(value);
+                let inverted = unwrap_build(self.builder.build_not(truthy, "not"));
+                self.bool_to_tagged(inverted)
+            }
+        })
+    }
+
+    fn compile_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &IrExpr,
+        rhs: &IrExpr,
+        function: FunctionValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, Diagnostic> {
+        let lhs_value = self.compile_expr(lhs, function)?;
+        let rhs_value = self.compile_expr(rhs, function)?;
+
+        Ok(match op {
+            BinOp::Eq => {
+                let lhs_ptr = self.byval_ptr(lhs_value);
+                let rhs_ptr = self.byval_ptr(rhs_value);
+                self.call_with_sret(
+                    self.runtime.values_equal,
+                    &[lhs_ptr.into(), rhs_ptr.into()],
+                    &[1, 2],
+                    "call_values_equal",
+                )
+            }
+            BinOp::NotEq => {
+                let lhs_ptr = self.byval_ptr(lhs_value);
+                let rhs_ptr = self.byval_ptr(rhs_value);
+                let result = self.call_with_sret(
+                    self.runtime.values_equal,
+                    &[lhs_ptr.into(), rhs_ptr.into()],
+                    &[1, 2],
+                    "call_values_equal",
+                );
+                let equal = self.extract_payload(result);
+                let zero = self.context.i64_type().const_zero();
+                let not_equal = unwrap_build(self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    equal,
+                    zero,
+                    "not_eq",
+                ));
+                self.bool_to_tagged(not_equal)
+            }
+            BinOp::Add => {
+                let result = unwrap_build(self.builder.build_int_add(
+                    self.extract_payload(lhs_value),
+                    self.extract_payload(rhs_value),
+                    "add",
+                ));
+                self.make_value_from_int(TAG_NUMBER, result)
+            }
+            BinOp::Sub => {
+                let result = unwrap_build(self.builder.build_int_sub(
+                    self.extract_payload(lhs_value),
+                    self.extract_payload(rhs_value),
+                    "sub",
+                ));
+                self.make_value_from_int(TAG_NUMBER, result)
+            }
+            BinOp::Mul => {
+                let result = unwrap_build(self.builder.build_int_mul(
+                    self.extract_payload(lhs_value),
+                    self.extract_payload(rhs_value),
+                    "mul",
+                ));
+                self.make_value_from_int(TAG_NUMBER, result)
+            }
+            BinOp::Div => {
+                let result = unwrap_build(self.builder.build_int_signed_div(
+                    self.extract_payload(lhs_value),
+                    self.extract_payload(rhs_value),
+                    "div",
+                ));
+                self.make_value_from_int(TAG_NUMBER, result)
+            }
+            BinOp::Lt => self.compile_comparison(IntPredicate::SLT, lhs_value, rhs_value),
+            BinOp::LtEq => self.compile_comparison(IntPredicate::SLE, lhs_value, rhs_value),
+            BinOp::Gt => self.compile_comparison(IntPredicate::SGT, lhs_value, rhs_value),
+            BinOp::GtEq => self.compile_comparison(IntPredicate::SGE, lhs_value, rhs_value),
+            BinOp::And => {
+                let combined = unwrap_build(self.builder.build_and(
+                    self.is_truthy(lhs_value),
+                    self.is_truthy(rhs_value),
+                    "and",
+                ));
+                self.bool_to_tagged(combined)
+            }
+            BinOp::Or => {
+                let combined = unwrap_build(self.builder.build_or(
+                    self.is_truthy(lhs_value),
+                    self.is_truthy(rhs_value),
+                    "or",
+                ));
+                self.bool_to_tagged(combined)
+            }
+        })
+    }
+
+    fn compile_comparison(
+        &self,
+        predicate: IntPredicate,
+        lhs: StructValue<'ctx>,
+        rhs: StructValue<'ctx>,
+    ) -> StructValue<'ctx> {
+        let cmp = unwrap_build(self.builder.build_int_compare(
+            predicate,
+            self.extract_payload(lhs),
+            self.extract_payload(rhs),
+            "cmp",
+        ));
+        self.bool_to_tagged(cmp)
+    }
+
+    fn compile_call(
+        &mut self,
+        callee: &IrExpr,
+        args: &[IrExpr],
+        function: FunctionValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, Diagnostic> {
+        let callee_value = self.compile_expr(callee, function)?;
+        let mut arg_values = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_values.push(self.compile_expr(arg, function)?);
+        }
+
+        let payload = self.extract_payload(callee_value);
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ptr = unwrap_build(self.builder.build_int_to_ptr(payload, ptr_ty, "callee_ptr"));
+        let fn_type = self
+            .value_ty
+            .fn_type(&vec![self.value_ty.into(); args.len()], false);
+        let call_args: Vec<BasicMetadataValueEnum> =
+            arg_values.iter().map(|value| (*value).into()).collect();
+
+        let call = unwrap_build(self.builder.build_indirect_call(
+            fn_type,
+            fn_ptr,
+            &call_args,
+            "call_indirect",
+        ));
+        Ok(call_result(call))
+    }
+
+    fn compile_array_literal(
+        &mut self,
+        elements: &[IrExpr],
+        function: FunctionValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, Diagnostic> {
+        let mut values = Vec::with_capacity(elements.len());
+        for element in elements {
+            values.push(self.compile_expr(element, function)?);
+        }
+
+        let len = values.len() as u32;
+        let array_ty = self.value_ty.array_type(len);
+        let buffer = unwrap_build(self.builder.build_alloca(array_ty, "array_buffer"));
+        let i32_ty = self.context.i32_type();
+        for (index, value) in values.into_iter().enumerate() {
+            // SAFETY: `index` ranges over `0..len`, the exact bound `array_ty`
+            // was created with, and `buffer` was just allocated by this same
+            // builder in this same function, so the GEP stays in bounds.
+            let elem_ptr = unsafe {
+                unwrap_build(self.builder.build_gep(
+                    array_ty,
+                    buffer,
+                    &[i32_ty.const_zero(), i32_ty.const_int(index as u64, false)],
+                    "array_elem",
+                ))
+            };
+            unwrap_build(self.builder.build_store(elem_ptr, value));
+        }
+
+        let len_value = self.context.i64_type().const_int(len as u64, false);
+        Ok(self.call_with_sret(
+            self.runtime.make_array,
+            &[buffer.into(), len_value.into()],
+            &[],
+            "call_make_array",
+        ))
+    }
+}
