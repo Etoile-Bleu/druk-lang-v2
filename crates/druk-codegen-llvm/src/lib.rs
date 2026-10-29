@@ -32,7 +32,7 @@ pub fn run(module: &IrModule) -> Result<(), Diagnostic> {
         false,
     );
 
-    let runtime = RuntimeFns::declare(&context, &llvm_module, value_ty);
+    let runtime = RuntimeFns::declare(&context, &llvm_module);
 
     let mut functions = Vec::with_capacity(module.functions.len());
     for function in &module.functions {
