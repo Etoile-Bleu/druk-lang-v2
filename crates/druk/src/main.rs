@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use druk_driver::DriverError;
 
 #[derive(Parser)]
 #[command(name = "druk", about = "The Druk language compiler")]
@@ -15,14 +16,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Parse and type-check a .druk file without running it.
     Check { file: PathBuf },
+    /// Compile and run a .druk file via the LLVM JIT.
+    Run { file: PathBuf },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     init_logging(cli.debug);
     match cli.command {
-        Command::Check { file } => run_check(&file),
+        Command::Check { file } => report(
+            &file,
+            druk_driver::check_file(&file).map(|hir| {
+                format!(
+                    "{}: checked {} top-level statement(s), no diagnostics",
+                    file.display(),
+                    hir.ast.top_level.len()
+                )
+            }),
+        ),
+        Command::Run { file } => {
+            report(&file, druk_driver::run_file(&file).map(|()| String::new()))
+        }
     }
 }
 
@@ -33,21 +49,19 @@ fn init_logging(debug: bool) {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-fn run_check(file: &std::path::Path) -> ExitCode {
-    match druk_driver::check_file(file) {
-        Ok(hir) => {
-            println!(
-                "{}: checked {} top-level statement(s), no diagnostics",
-                file.display(),
-                hir.ast.top_level.len()
-            );
+fn report(file: &std::path::Path, result: Result<String, DriverError>) -> ExitCode {
+    match result {
+        Ok(message) => {
+            if !message.is_empty() {
+                println!("{message}");
+            }
             ExitCode::SUCCESS
         }
-        Err(druk_driver::DriverError::Io { path, source }) => {
+        Err(DriverError::Io { path, source }) => {
             eprintln!("error: could not read {path}: {source}");
             ExitCode::FAILURE
         }
-        Err(druk_driver::DriverError::Diagnostics(diagnostics)) => {
+        Err(DriverError::Diagnostics(diagnostics)) => {
             let source = std::fs::read_to_string(file).unwrap_or_default();
             eprint!(
                 "{}",

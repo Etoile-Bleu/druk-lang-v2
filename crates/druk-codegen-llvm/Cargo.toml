@@ -9,4 +9,10 @@ workspace = true
 
 [dependencies]
 druk-ir = { workspace = true }
+druk-runtime = { workspace = true }
 druk-diagnostics = { workspace = true }
+inkwell = { workspace = true }
+
+[dev-dependencies]
+druk-parser = { workspace = true }
+druk-hir = { workspace = true }
