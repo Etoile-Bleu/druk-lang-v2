@@ -179,8 +179,8 @@ dependencies = [
 name = "druk-driver"
 version = "0.1.0"
 dependencies = [
- "druk-ast",
  "druk-diagnostics",
+ "druk-hir",
  "druk-parser",
  "thiserror",
 ]
@@ -195,6 +195,7 @@ version = "0.1.0"
 dependencies = [
  "druk-ast",
  "druk-diagnostics",
+ "druk-parser",
 ]
 
 [[package]]

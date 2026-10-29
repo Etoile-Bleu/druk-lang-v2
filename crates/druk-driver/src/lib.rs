@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use druk_ast::Ast;
 use druk_diagnostics::Diagnostic;
+use druk_hir::Hir;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DriverError {
@@ -15,22 +15,22 @@ pub enum DriverError {
     Diagnostics(Vec<Diagnostic>),
 }
 
-/// Runs the frontend (lexer + parser) over `source` and returns the parsed
-/// AST, or every diagnostic the frontend collected if any pass failed.
+/// Runs the frontend and HIR passes (lexer, parser, name resolution, type
+/// checking) over `source`, returning the checked [`Hir`], or every
+/// diagnostic collected if any pass failed.
 ///
-/// Later pipeline stages (HIR, IR, codegen) are not wired in yet — see
-/// `druk-hir`/`druk-ir`/`druk-codegen-llvm`.
-pub fn check_source(source: &str) -> Result<Ast, Vec<Diagnostic>> {
-    let (ast, diagnostics) = druk_parser::parse(source);
-    if diagnostics.is_empty() {
-        Ok(ast)
-    } else {
-        Err(diagnostics)
+/// Later pipeline stages (IR, codegen) are not wired in yet — see
+/// `druk-ir`/`druk-codegen-llvm`.
+pub fn check_source(source: &str) -> Result<Hir, Vec<Diagnostic>> {
+    let (ast, parse_diagnostics) = druk_parser::parse(source);
+    if !parse_diagnostics.is_empty() {
+        return Err(parse_diagnostics);
     }
+    druk_hir::check(ast)
 }
 
 /// Reads `path` from disk and runs [`check_source`] over its contents.
-pub fn check_file(path: &Path) -> Result<Ast, DriverError> {
+pub fn check_file(path: &Path) -> Result<Hir, DriverError> {
     let source = std::fs::read_to_string(path).map_err(|source| DriverError::Io {
         path: path.display().to_string(),
         source,

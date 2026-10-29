@@ -5,8 +5,20 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(u32);
 
+impl ExprId {
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StmtId(u32);
+
+impl StmtId {
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -146,6 +158,14 @@ impl Ast {
 
     pub fn stmt(&self, id: StmtId) -> &Stmt {
         &self.stmts[id.0 as usize]
+    }
+
+    pub fn expr_count(&self) -> usize {
+        self.exprs.len()
+    }
+
+    pub fn stmt_count(&self) -> usize {
+        self.stmts.len()
     }
 }
 
