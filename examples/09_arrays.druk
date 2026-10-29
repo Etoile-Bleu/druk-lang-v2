@@ -1,0 +1,6 @@
+གྲངས་[] numbers = [༡, ༢, ༣, ༤, ༥];
+བཀོད་ numbers[༠];
+བཀོད་ numbers[༤];
+
+numbers[༢] = ༩༩;
+བཀོད་ numbers[༢];

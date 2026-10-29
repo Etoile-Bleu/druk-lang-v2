@@ -1,0 +1,5 @@
+གྲངས་ multiply = (a, b) -> a * b;
+བཀོད་ multiply(༦, ༧);
+
+གྲངས་ double = n -> n * ༢;
+བཀོད་ double(༢༡);
