@@ -101,20 +101,21 @@ fn heap() -> &'static Mutex<Heap> {
     HEAP.get_or_init(|| Mutex::new(Heap::new()))
 }
 
-/// Every currently active Druk call frame's locals buffer, as
-/// `(pointer, element count)`, registered by [`druk_rt_push_frame`] and
-/// unregistered by [`druk_rt_pop_frame`]. This is the GC's root set: codegen
-/// pairs every function entry with a push and every one of that function's
-/// return points with a pop, so at any moment this holds exactly the locals
-/// of every frame currently on the call stack, including recursive calls.
+/// Every currently active root buffer, as `(pointer, element count)`,
+/// registered by [`druk_rt_push_frame`] and unregistered by
+/// [`druk_rt_pop_frame`]. This is the GC's root set, and it covers two kinds
+/// of buffer, both pushed/popped the same way:
 ///
-/// This roots named local variables, not sub-expression temporaries that
-/// never get stored into one (for example, an earlier element of an array
-/// literal still being assembled when evaluating a later element triggers a
-/// collection). Closing that gap needs precise stack maps from LLVM, which
-/// `druk-codegen-llvm` does not have; the risk is bounded by how rarely a
-/// collection's threshold is crossed in the middle of evaluating a single
-/// expression.
+/// - A function's locals array, pushed once right after it's set up and
+///   popped immediately before every one of that function's return points,
+///   so at any moment this holds the locals of every frame currently on the
+///   call stack, including recursive calls.
+/// - A "pending siblings" buffer (`druk-codegen-llvm`'s
+///   `compile_rooted_siblings`) spanning the evaluation of a list of
+///   sub-expressions that are each computed before any of them is consumed
+///   — an array literal's elements, a call's arguments, a binary
+///   expression's operands — so a later sibling's own allocation can't
+///   collect an earlier one that was never stored into a named local.
 static FRAME_STACK: OnceLock<Mutex<Vec<(usize, usize)>>> = OnceLock::new();
 
 fn frame_stack() -> &'static Mutex<Vec<(usize, usize)>> {
@@ -340,6 +341,30 @@ mod tests {
         }
 
         assert_eq!(format_value(kept), "kept");
+        druk_rt_pop_frame();
+    }
+
+    #[test]
+    fn pending_siblings_buffer_protects_earlier_values_during_later_allocations() {
+        let _guard = TEST_HEAP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Mirrors what `druk-codegen-llvm`'s `compile_rooted_siblings` emits
+        // for something like an array literal `["first", noisy(), ...]`: a
+        // buffer holding every sibling evaluated so far, registered as a
+        // frame for the whole span, with each slot nil until its own value
+        // is computed and stored into it.
+        let mut pending = [RtValue::nil(), RtValue::nil()];
+        unsafe { druk_rt_push_frame(pending.as_ptr(), pending.len() as i64) };
+
+        pending[0] = unsafe { druk_rt_make_string(b"first".as_ptr(), 5) };
+        let first = pending[0];
+
+        for i in 0..300 {
+            let garbage = format!("garbage{i}");
+            pending[1] = unsafe { druk_rt_make_string(garbage.as_bytes().as_ptr(), garbage.len()) };
+        }
+
+        assert_eq!(format_value(first), "first");
         druk_rt_pop_frame();
     }
 
