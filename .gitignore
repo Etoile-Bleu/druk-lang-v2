@@ -17,3 +17,5 @@ debug_*.txt
 .vscode/
 .idea/
 *.snap.new
+*.lib
+.llvm-stub-libs/

@@ -38,6 +38,23 @@ pub fn check_file(path: &Path) -> Result<Hir, DriverError> {
     check_source(&source).map_err(DriverError::Diagnostics)
 }
 
+/// Runs `source` through the full pipeline (frontend, HIR, IR, LLVM JIT)
+/// and executes it.
+pub fn run_source(source: &str) -> Result<(), Vec<Diagnostic>> {
+    let hir = check_source(source)?;
+    let ir = druk_ir::lower(&hir)?;
+    druk_codegen_llvm::run(&ir).map_err(|diagnostic| vec![diagnostic])
+}
+
+/// Reads `path` from disk and runs [`run_source`] over its contents.
+pub fn run_file(path: &Path) -> Result<(), DriverError> {
+    let source = std::fs::read_to_string(path).map_err(|source| DriverError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    run_source(&source).map_err(DriverError::Diagnostics)
+}
+
 /// Renders every diagnostic in `diagnostics` against `source_name`/`source`,
 /// in the order they were reported.
 pub fn render_diagnostics(source_name: &str, source: &str, diagnostics: &[Diagnostic]) -> String {
@@ -57,6 +74,19 @@ mod tests {
             if path.extension().map(|ext| ext == "druk").unwrap_or(false) {
                 let result = check_file(&path);
                 assert!(result.is_ok(), "failed to check {path:?}: {result:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn runs_every_bundled_example_successfully() {
+        let examples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
+        let entries = std::fs::read_dir(examples_dir).expect("examples dir exists");
+        for entry in entries {
+            let path = entry.expect("readable dir entry").path();
+            if path.extension().map(|ext| ext == "druk").unwrap_or(false) {
+                let result = run_file(&path);
+                assert!(result.is_ok(), "failed to run {path:?}: {result:?}");
             }
         }
     }
