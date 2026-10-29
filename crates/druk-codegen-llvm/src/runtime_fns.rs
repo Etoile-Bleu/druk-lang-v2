@@ -14,6 +14,8 @@ pub(crate) struct RuntimeFns<'ctx> {
     pub(crate) array_set: FunctionValue<'ctx>,
     pub(crate) values_equal: FunctionValue<'ctx>,
     pub(crate) is_truthy: FunctionValue<'ctx>,
+    pub(crate) push_frame: FunctionValue<'ctx>,
+    pub(crate) pop_frame: FunctionValue<'ctx>,
     pub(crate) sret_attr: Attribute,
     pub(crate) byval_attr: Attribute,
 }
@@ -82,6 +84,12 @@ impl<'ctx> RuntimeFns<'ctx> {
             i64_t.fn_type(&[ptr_t.into()], false),
             None,
         );
+        let push_frame = module.add_function(
+            "druk_rt_push_frame",
+            void_t.fn_type(&[ptr_t.into(), i64_t.into()], false),
+            None,
+        );
+        let pop_frame = module.add_function("druk_rt_pop_frame", void_t.fn_type(&[], false), None);
 
         for function in [make_string, make_array, array_get, array_set, values_equal] {
             function.add_attribute(AttributeLoc::Param(0), sret_attr);
@@ -106,6 +114,8 @@ impl<'ctx> RuntimeFns<'ctx> {
             array_set,
             values_equal,
             is_truthy,
+            push_frame,
+            pop_frame,
             sret_attr,
             byval_attr,
         }
@@ -139,6 +149,14 @@ impl<'ctx> RuntimeFns<'ctx> {
         engine.add_global_mapping(
             &self.is_truthy,
             druk_runtime::druk_rt_is_truthy as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.push_frame,
+            druk_runtime::druk_rt_push_frame as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.pop_frame,
+            druk_runtime::druk_rt_pop_frame as *const () as usize,
         );
     }
 }
