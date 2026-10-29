@@ -49,7 +49,8 @@ pub fn run(module: &IrModule) -> Result<(), Diagnostic> {
         value_ty,
         runtime,
         functions,
-        locals: Vec::new(),
+        locals_ptr: None,
+        locals_ty: None,
     };
 
     for (index, function) in module.functions.iter().enumerate() {
@@ -124,6 +125,29 @@ mod tests {
     #[test]
     fn runs_lambdas() {
         compile_and_run("གྲངས་ multiply = (a, b) -> a * b;\nབཀོད་ multiply(༦, ༧);");
+    }
+
+    #[test]
+    fn collection_triggered_inside_a_nested_call_spares_a_live_outer_local() {
+        compile_and_run(
+            r#"
+            ལས་འགན་ allocate_garbage() {
+                ཡིག་འབྲུ་ junk = "garbage";
+            }
+
+            ལས་འགན་ run() {
+                ཡིག་འབྲུ་ kept = "kept-across-collection";
+                གྲངས་ i = ༠;
+                ཡང་བསྐྱར་ (i < ༣༠༠) {
+                    allocate_garbage();
+                    i = i + ༡;
+                }
+                བཀོད་ kept;
+            }
+
+            run();
+            "#,
+        );
     }
 
     #[test]
