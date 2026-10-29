@@ -122,6 +122,14 @@ pub extern "C" fn druk_rt_print(value: RtValue) {
     println!("{}", format_value(value));
 }
 
+/// A raw `0`/`1` rather than an `RtValue`, so codegen can compare it
+/// directly against zero instead of round-tripping through the tagged
+/// representation just to branch on it.
+#[no_mangle]
+pub extern "C" fn druk_rt_is_truthy(value: RtValue) -> i64 {
+    value.is_truthy() as i64
+}
+
 /// # Safety
 /// `bytes` must point to at least `len` valid, initialized bytes, alive for
 /// the duration of this call. Codegen only ever passes a pointer into a
@@ -251,5 +259,11 @@ mod tests {
         assert!(RtValue::number(1).is_truthy());
         assert!(!RtValue::boolean(false).is_truthy());
         assert!(RtValue::boolean(true).is_truthy());
+    }
+
+    #[test]
+    fn is_truthy_extern_matches_the_method() {
+        assert_eq!(druk_rt_is_truthy(RtValue::nil()), 0);
+        assert_eq!(druk_rt_is_truthy(RtValue::number(7)), 1);
     }
 }
