@@ -2,7 +2,7 @@ use inkwell::attributes::AttributeLoc;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::types::StructType;
+use inkwell::types::{ArrayType, StructType};
 use inkwell::values::{
     BasicMetadataValueEnum, CallSiteValue, FunctionValue, IntValue, PointerValue, StructValue,
     ValueKind,
@@ -37,7 +37,13 @@ pub(crate) struct CodeGen<'ctx> {
     pub(crate) value_ty: StructType<'ctx>,
     pub(crate) runtime: RuntimeFns<'ctx>,
     pub(crate) functions: Vec<FunctionValue<'ctx>>,
-    pub(crate) locals: Vec<PointerValue<'ctx>>,
+    /// The current function's locals, as one contiguous `alloca` array
+    /// rather than a separate `alloca` per slot, so its pointer and length
+    /// can be handed to `druk_rt_push_frame` as the GC's root set for this
+    /// frame. `None` outside of `compile_function` (there is no "current
+    /// function" between top-level calls).
+    pub(crate) locals_ptr: Option<PointerValue<'ctx>>,
+    pub(crate) locals_ty: Option<ArrayType<'ctx>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -73,6 +79,139 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn extract_payload(&self, value: StructValue<'ctx>) -> IntValue<'ctx> {
         unwrap_build(self.builder.build_extract_value(value, 1, "payload")).into_int_value()
+    }
+
+    /// Points at slot `index` of an array `alloca` of type `ty` at `ptr`.
+    /// Shared by every place that stores into a fixed-size stack array of
+    /// `RtValue`s: locals, array literals, and `compile_rooted_siblings`'s
+    /// pending-values buffer.
+    fn array_slot_ptr(
+        &self,
+        ty: ArrayType<'ctx>,
+        ptr: PointerValue<'ctx>,
+        index: u32,
+    ) -> PointerValue<'ctx> {
+        let i32_ty = self.context.i32_type();
+        // SAFETY: every caller passes an `index` below the exact length
+        // `ty` was created with, and a `ptr` that was itself just allocated
+        // with that same `ty`, so the GEP stays in bounds.
+        unsafe {
+            unwrap_build(self.builder.build_gep(
+                ty,
+                ptr,
+                &[i32_ty.const_zero(), i32_ty.const_int(index as u64, false)],
+                "array_slot",
+            ))
+        }
+    }
+
+    /// Points at local slot `slot` inside the current function's locals
+    /// array. Only valid between `compile_function` allocating that array
+    /// and returning from it.
+    fn local_ptr(&self, slot: u32) -> PointerValue<'ctx> {
+        let ptr = self
+            .locals_ptr
+            .unwrap_or_else(|| ice!("local slot accessed outside of compile_function"));
+        let ty = self
+            .locals_ty
+            .unwrap_or_else(|| ice!("local slot accessed outside of compile_function"));
+        self.array_slot_ptr(ty, ptr, slot)
+    }
+
+    /// Registers `ptr` (an array of `count` `RtValue`s) as a temporary GC
+    /// root for the duration of the block emitted between this call and the
+    /// matching [`CodeGen::pop_temp_frame`].
+    fn push_temp_frame(&self, ptr: PointerValue<'ctx>, count: u32) {
+        let count_value = self.context.i64_type().const_int(count as u64, false);
+        unwrap_build(self.builder.build_call(
+            self.runtime.push_frame,
+            &[ptr.into(), count_value.into()],
+            "call_push_temp_frame",
+        ));
+    }
+
+    fn pop_temp_frame(&self) {
+        unwrap_build(self.builder.build_call(
+            self.runtime.pop_frame,
+            &[],
+            "call_pop_temp_frame",
+        ));
+    }
+
+    /// Evaluates every expression in `exprs`, left to right, keeping each
+    /// already-computed sibling rooted in a temporary GC frame for the rest
+    /// of the evaluation.
+    ///
+    /// Without this, a later sibling's own allocation could collect an
+    /// earlier sibling's fresh heap value before it's stored anywhere: a
+    /// named local stays rooted for as long as its function's frame is
+    /// registered (see `push_frame`), but a value that has only just been
+    /// computed — the first two elements of an array literal, while a third
+    /// element's construction calls `druk_rt_make_string` — isn't reachable
+    /// from any frame until something stores it into one. This closes that
+    /// gap for every place `compile_expr` is called more than once before
+    /// all the results are consumed: array literals, call arguments, binary
+    /// operands, and array index/assignment operands.
+    fn compile_rooted_siblings(
+        &mut self,
+        exprs: &[&IrExpr],
+        function: FunctionValue<'ctx>,
+    ) -> Result<Vec<StructValue<'ctx>>, Diagnostic> {
+        if exprs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let len = exprs.len() as u32;
+        let buffer_ty = self.value_ty.array_type(len);
+        let buffer = unwrap_build(self.builder.build_alloca(buffer_ty, "pending_siblings"));
+
+        // Every slot starts out as a safe sentinel (tag = nil), so a
+        // collection that fires before a later slot is written never traces
+        // uninitialized bytes as if they were a handle.
+        let nil = self.const_value(TAG_NIL, 0);
+        for index in 0..len {
+            let slot_ptr = self.array_slot_ptr(buffer_ty, buffer, index);
+            unwrap_build(self.builder.build_store(slot_ptr, nil));
+        }
+
+        self.push_temp_frame(buffer, len);
+
+        let mut values = Vec::with_capacity(exprs.len());
+        for (index, expr) in exprs.iter().enumerate() {
+            let value = self.compile_expr(expr, function)?;
+            let slot_ptr = self.array_slot_ptr(buffer_ty, buffer, index as u32);
+            unwrap_build(self.builder.build_store(slot_ptr, value));
+            values.push(value);
+        }
+
+        self.pop_temp_frame();
+        Ok(values)
+    }
+
+    /// Registers the current function's locals array as a GC root set for
+    /// the duration of this call — see `druk_rt_push_frame`'s doc comment in
+    /// `druk-runtime` for why this, rather than scanning the native stack,
+    /// is how Druk's collector finds live locals across (including
+    /// recursive) calls.
+    fn push_frame(&self, locals_count: u32) {
+        let ptr = self
+            .locals_ptr
+            .unwrap_or_else(|| ice!("push_frame called outside of compile_function"));
+        let count = self.context.i64_type().const_int(locals_count as u64, false);
+        unwrap_build(self.builder.build_call(
+            self.runtime.push_frame,
+            &[ptr.into(), count.into()],
+            "call_push_frame",
+        ));
+    }
+
+    /// Unregisters the current function's locals, emitted right before
+    /// every return point so a popped frame never outlives its call.
+    fn pop_frame(&self) {
+        unwrap_build(
+            self.builder
+                .build_call(self.runtime.pop_frame, &[], "call_pop_frame"),
+        );
     }
 
     /// Writes `value` into a fresh stack slot and returns a pointer to it,
@@ -147,26 +286,26 @@ impl<'ctx> CodeGen<'ctx> {
         let entry = self.context.append_basic_block(function_value, "entry");
         self.builder.position_at_end(entry);
 
-        self.locals = Vec::with_capacity(locals_count as *const () as usize);
-        for slot in 0..locals_count {
-            let alloca = unwrap_build(
-                self.builder
-                    .build_alloca(self.value_ty, &format!("local{slot}")),
-            );
-            self.locals.push(alloca);
-        }
+        let locals_ty = self.value_ty.array_type(locals_count);
+        let locals_ptr = unwrap_build(self.builder.build_alloca(locals_ty, "locals"));
+        self.locals_ptr = Some(locals_ptr);
+        self.locals_ty = Some(locals_ty);
+
         for index in 0..arity {
             let param = function_value
                 .get_nth_param(index as u32)
                 .unwrap_or_else(|| ice!("function is missing declared parameter {index}"));
-            unwrap_build(self.builder.build_store(self.locals[index], param));
+            let ptr = self.local_ptr(index as u32);
+            unwrap_build(self.builder.build_store(ptr, param));
         }
+        self.push_frame(locals_count);
 
         for stmt in body {
             self.compile_stmt(stmt, function_value)?;
         }
 
         if !self.is_terminated() {
+            self.pop_frame();
             if is_main {
                 unwrap_build(self.builder.build_return(None));
             } else {
@@ -205,6 +344,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Some(expr) => self.compile_expr(expr, function)?,
                     None => self.const_value(TAG_NIL, 0),
                 };
+                self.pop_frame();
                 unwrap_build(self.builder.build_return(Some(&result)));
             }
             IrStmt::Block(stmts) => {
@@ -305,13 +445,13 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::ConstStr(value) => self.compile_string_literal(value),
             IrExpr::FunctionRef(fid) => self.compile_function_ref(*fid),
             IrExpr::GetLocal(slot) => {
-                let ptr = self.locals[*slot as usize];
+                let ptr = self.local_ptr(*slot);
                 unwrap_build(self.builder.build_load(self.value_ty, ptr, "load_local"))
                     .into_struct_value()
             }
             IrExpr::SetLocal(slot, value_expr) => {
                 let value = self.compile_expr(value_expr, function)?;
-                let ptr = self.locals[*slot as usize];
+                let ptr = self.local_ptr(*slot);
                 unwrap_build(self.builder.build_store(ptr, value));
                 value
             }
@@ -320,10 +460,10 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::Call(callee, args) => self.compile_call(callee, args, function)?,
             IrExpr::ArrayLiteral(elements) => self.compile_array_literal(elements, function)?,
             IrExpr::ArrayGet(object, index) => {
-                let object_value = self.compile_expr(object, function)?;
-                let index_value = self.compile_expr(index, function)?;
-                let object_ptr = self.byval_ptr(object_value);
-                let index_ptr = self.byval_ptr(index_value);
+                let operands =
+                    self.compile_rooted_siblings(&[object.as_ref(), index.as_ref()], function)?;
+                let object_ptr = self.byval_ptr(operands[0]);
+                let index_ptr = self.byval_ptr(operands[1]);
                 self.call_with_sret(
                     self.runtime.array_get,
                     &[object_ptr.into(), index_ptr.into()],
@@ -332,12 +472,13 @@ impl<'ctx> CodeGen<'ctx> {
                 )
             }
             IrExpr::ArraySet(object, index, value) => {
-                let object_value = self.compile_expr(object, function)?;
-                let index_value = self.compile_expr(index, function)?;
-                let value_value = self.compile_expr(value, function)?;
-                let object_ptr = self.byval_ptr(object_value);
-                let index_ptr = self.byval_ptr(index_value);
-                let value_ptr = self.byval_ptr(value_value);
+                let operands = self.compile_rooted_siblings(
+                    &[object.as_ref(), index.as_ref(), value.as_ref()],
+                    function,
+                )?;
+                let object_ptr = self.byval_ptr(operands[0]);
+                let index_ptr = self.byval_ptr(operands[1]);
+                let value_ptr = self.byval_ptr(operands[2]);
                 self.call_with_sret(
                     self.runtime.array_set,
                     &[object_ptr.into(), index_ptr.into(), value_ptr.into()],
@@ -397,8 +538,9 @@ impl<'ctx> CodeGen<'ctx> {
         rhs: &IrExpr,
         function: FunctionValue<'ctx>,
     ) -> Result<StructValue<'ctx>, Diagnostic> {
-        let lhs_value = self.compile_expr(lhs, function)?;
-        let rhs_value = self.compile_expr(rhs, function)?;
+        let operands = self.compile_rooted_siblings(&[lhs, rhs], function)?;
+        let lhs_value = operands[0];
+        let rhs_value = operands[1];
 
         Ok(match op {
             BinOp::Eq => {
@@ -507,10 +649,8 @@ impl<'ctx> CodeGen<'ctx> {
         function: FunctionValue<'ctx>,
     ) -> Result<StructValue<'ctx>, Diagnostic> {
         let callee_value = self.compile_expr(callee, function)?;
-        let mut arg_values = Vec::with_capacity(args.len());
-        for arg in args {
-            arg_values.push(self.compile_expr(arg, function)?);
-        }
+        let arg_refs: Vec<&IrExpr> = args.iter().collect();
+        let arg_values = self.compile_rooted_siblings(&arg_refs, function)?;
 
         let payload = self.extract_payload(callee_value);
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
@@ -535,27 +675,14 @@ impl<'ctx> CodeGen<'ctx> {
         elements: &[IrExpr],
         function: FunctionValue<'ctx>,
     ) -> Result<StructValue<'ctx>, Diagnostic> {
-        let mut values = Vec::with_capacity(elements.len());
-        for element in elements {
-            values.push(self.compile_expr(element, function)?);
-        }
+        let element_refs: Vec<&IrExpr> = elements.iter().collect();
+        let values = self.compile_rooted_siblings(&element_refs, function)?;
 
         let len = values.len() as u32;
         let array_ty = self.value_ty.array_type(len);
         let buffer = unwrap_build(self.builder.build_alloca(array_ty, "array_buffer"));
-        let i32_ty = self.context.i32_type();
         for (index, value) in values.into_iter().enumerate() {
-            // SAFETY: `index` ranges over `0..len`, the exact bound `array_ty`
-            // was created with, and `buffer` was just allocated by this same
-            // builder in this same function, so the GEP stays in bounds.
-            let elem_ptr = unsafe {
-                unwrap_build(self.builder.build_gep(
-                    array_ty,
-                    buffer,
-                    &[i32_ty.const_zero(), i32_ty.const_int(index as u64, false)],
-                    "array_elem",
-                ))
-            };
+            let elem_ptr = self.array_slot_ptr(array_ty, buffer, index as u32);
             unwrap_build(self.builder.build_store(elem_ptr, value));
         }
 
