@@ -1,0 +1,12 @@
+[package]
+name = "druk-codegen-llvm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+druk-ir = { workspace = true }
+druk-diagnostics = { workspace = true }
