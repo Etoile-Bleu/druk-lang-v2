@@ -1,0 +1,12 @@
+[package]
+name = "druk-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+logos = { workspace = true }
+druk-diagnostics = { workspace = true }

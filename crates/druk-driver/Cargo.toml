@@ -1,0 +1,14 @@
+[package]
+name = "druk-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+druk-ast = { workspace = true }
+druk-parser = { workspace = true }
+druk-diagnostics = { workspace = true }
+thiserror = { workspace = true }

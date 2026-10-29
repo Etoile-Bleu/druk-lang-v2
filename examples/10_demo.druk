@@ -1,0 +1,11 @@
+ལས་འགན་ run_op(གྲངས་ a, གྲངས་ b, op) {
+    སླར་ལོག་ op(a, b);
+}
+
+གྲངས་ res = run_op(༡༠, ༢, (x, y) -> x + y);
+བཀོད་ res;
+
+འགྲིག་པ་ res {
+    ༡༢ -> བཀོད་ "Math works!";
+    _  -> བཀོད་ "Something is wrong.";
+}

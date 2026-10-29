@@ -1,0 +1,11 @@
+[package]
+name = "druk-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+druk-diagnostics = { workspace = true }
