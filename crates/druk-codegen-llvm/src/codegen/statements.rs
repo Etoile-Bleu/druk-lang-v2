@@ -20,7 +20,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             IrStmt::Print(expr) => {
                 let value = self.compile_expr(expr, function)?;
-                let ptr = self.value_ptr(value);
+                let ptr = self.value_ptr(function, value);
                 unwrap_build(self.builder.build_call(
                     self.runtime.print,
                     &[ptr.into()],
@@ -58,7 +58,7 @@ impl<'ctx> CodeGen<'ctx> {
         function: FunctionValue<'ctx>,
     ) -> Result<(), Diagnostic> {
         let cond_value = self.compile_expr(cond, function)?;
-        let cond_bool = self.is_truthy(cond_value);
+        let cond_bool = self.is_truthy(function, cond_value);
 
         let then_bb = self.context.append_basic_block(function, "if.then");
         let else_bb = self.context.append_basic_block(function, "if.else");
@@ -103,7 +103,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.position_at_end(cond_bb);
         let cond_value = self.compile_expr(cond, function)?;
-        let cond_bool = self.is_truthy(cond_value);
+        let cond_bool = self.is_truthy(function, cond_value);
         unwrap_build(
             self.builder
                 .build_conditional_branch(cond_bool, body_bb, end_bb),

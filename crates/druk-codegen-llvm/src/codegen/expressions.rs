@@ -17,7 +17,7 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::ConstInt(value) => self.const_value(TAG_NUMBER, *value),
             IrExpr::ConstBool(value) => self.const_value(TAG_BOOL, *value as i64),
             IrExpr::ConstNil => self.const_value(TAG_NIL, 0),
-            IrExpr::ConstStr(value) => self.compile_string_literal(value),
+            IrExpr::ConstStr(value) => self.compile_string_literal(function, value),
             IrExpr::FunctionRef(fid) => self.compile_function_ref(*fid),
             IrExpr::GetLocal(slot) => {
                 let ptr = self.local_ptr(*slot);
@@ -37,9 +37,10 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::ArrayGet(object, index) => {
                 let operands =
                     self.compile_rooted_siblings(&[object.as_ref(), index.as_ref()], function)?;
-                let object_ptr = self.value_ptr(operands[0]);
-                let index_ptr = self.value_ptr(operands[1]);
+                let object_ptr = self.value_ptr(function, operands[0]);
+                let index_ptr = self.value_ptr(function, operands[1]);
                 self.call_with_out_param(
+                    function,
                     self.runtime.array_get,
                     &[object_ptr.into(), index_ptr.into()],
                     "call_array_get",
@@ -50,10 +51,11 @@ impl<'ctx> CodeGen<'ctx> {
                     &[object.as_ref(), index.as_ref(), value.as_ref()],
                     function,
                 )?;
-                let object_ptr = self.value_ptr(operands[0]);
-                let index_ptr = self.value_ptr(operands[1]);
-                let value_ptr = self.value_ptr(operands[2]);
+                let object_ptr = self.value_ptr(function, operands[0]);
+                let index_ptr = self.value_ptr(function, operands[1]);
+                let value_ptr = self.value_ptr(function, operands[2]);
                 self.call_with_out_param(
+                    function,
                     self.runtime.array_set,
                     &[object_ptr.into(), index_ptr.into(), value_ptr.into()],
                     "call_array_set",
@@ -62,9 +64,10 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::StructLiteral(fields) => self.compile_struct_literal(fields, function)?,
             IrExpr::FieldGet(object, field) => {
                 let object_value = self.compile_expr(object, function)?;
-                let object_ptr = self.value_ptr(object_value);
+                let object_ptr = self.value_ptr(function, object_value);
                 let (name_ptr, name_len) = self.compile_field_name(field);
                 self.call_with_out_param(
+                    function,
                     self.runtime.struct_get,
                     &[object_ptr.into(), name_ptr.into(), name_len.into()],
                     "call_struct_get",
@@ -76,10 +79,11 @@ impl<'ctx> CodeGen<'ctx> {
             IrExpr::FieldSet(object, field, value) => {
                 let operands =
                     self.compile_rooted_siblings(&[object.as_ref(), value.as_ref()], function)?;
-                let object_ptr = self.value_ptr(operands[0]);
-                let value_ptr = self.value_ptr(operands[1]);
+                let object_ptr = self.value_ptr(function, operands[0]);
+                let value_ptr = self.value_ptr(function, operands[1]);
                 let (name_ptr, name_len) = self.compile_field_name(field);
                 self.call_with_out_param(
+                    function,
                     self.runtime.struct_set,
                     &[
                         object_ptr.into(),
@@ -94,11 +98,16 @@ impl<'ctx> CodeGen<'ctx> {
         })
     }
 
-    fn compile_string_literal(&self, value: &str) -> StructValue<'ctx> {
+    fn compile_string_literal(
+        &self,
+        function: FunctionValue<'ctx>,
+        value: &str,
+    ) -> StructValue<'ctx> {
         let global = unwrap_build(self.builder.build_global_string_ptr(value, "str_lit"));
         let ptr = global.as_pointer_value();
         let len = self.context.i64_type().const_int(value.len() as u64, false);
         self.call_with_out_param(
+            function,
             self.runtime.make_string,
             &[ptr.into(), len.into()],
             "call_make_string",
@@ -128,7 +137,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.make_value_from_int(TAG_NUMBER, negated)
             }
             UnOp::Not => {
-                let truthy = self.is_truthy(value);
+                let truthy = self.is_truthy(function, value);
                 let inverted = unwrap_build(self.builder.build_not(truthy, "not"));
                 self.bool_to_tagged(inverted)
             }
@@ -148,18 +157,20 @@ impl<'ctx> CodeGen<'ctx> {
 
         Ok(match op {
             BinOp::Eq => {
-                let lhs_ptr = self.value_ptr(lhs_value);
-                let rhs_ptr = self.value_ptr(rhs_value);
+                let lhs_ptr = self.value_ptr(function, lhs_value);
+                let rhs_ptr = self.value_ptr(function, rhs_value);
                 self.call_with_out_param(
+                    function,
                     self.runtime.values_equal,
                     &[lhs_ptr.into(), rhs_ptr.into()],
                     "call_values_equal",
                 )
             }
             BinOp::NotEq => {
-                let lhs_ptr = self.value_ptr(lhs_value);
-                let rhs_ptr = self.value_ptr(rhs_value);
+                let lhs_ptr = self.value_ptr(function, lhs_value);
+                let rhs_ptr = self.value_ptr(function, rhs_value);
                 let result = self.call_with_out_param(
+                    function,
                     self.runtime.values_equal,
                     &[lhs_ptr.into(), rhs_ptr.into()],
                     "call_values_equal",
@@ -212,16 +223,16 @@ impl<'ctx> CodeGen<'ctx> {
             BinOp::GtEq => self.compile_comparison(IntPredicate::SGE, lhs_value, rhs_value),
             BinOp::And => {
                 let combined = unwrap_build(self.builder.build_and(
-                    self.is_truthy(lhs_value),
-                    self.is_truthy(rhs_value),
+                    self.is_truthy(function, lhs_value),
+                    self.is_truthy(function, rhs_value),
                     "and",
                 ));
                 self.bool_to_tagged(combined)
             }
             BinOp::Or => {
                 let combined = unwrap_build(self.builder.build_or(
-                    self.is_truthy(lhs_value),
-                    self.is_truthy(rhs_value),
+                    self.is_truthy(function, lhs_value),
+                    self.is_truthy(function, rhs_value),
                     "or",
                 ));
                 self.bool_to_tagged(combined)
