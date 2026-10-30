@@ -1,0 +1,9 @@
+ལས་འགན་ make_counter() {
+    གྲངས་[] state = [༠];
+    སླར་ལོག་ step -> state[༠] = state[༠] + step;
+}
+
+གྲངས་ counter = make_counter();
+བཀོད་ counter(༡);
+བཀོད་ counter(༢);
+བཀོད་ counter(༣);

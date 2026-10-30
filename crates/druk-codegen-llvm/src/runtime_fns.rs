@@ -20,6 +20,13 @@ pub(crate) struct RuntimeFns<'ctx> {
     pub(crate) make_closure: FunctionValue<'ctx>,
     pub(crate) closure_function_ptr: FunctionValue<'ctx>,
     pub(crate) closure_get_capture: FunctionValue<'ctx>,
+    pub(crate) len: FunctionValue<'ctx>,
+    pub(crate) push: FunctionValue<'ctx>,
+    pub(crate) pop: FunctionValue<'ctx>,
+    pub(crate) typeof_: FunctionValue<'ctx>,
+    pub(crate) input: FunctionValue<'ctx>,
+    pub(crate) argv: FunctionValue<'ctx>,
+    pub(crate) argc: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeFns<'ctx> {
@@ -129,6 +136,35 @@ impl<'ctx> RuntimeFns<'ctx> {
             void_t.fn_type(&[ptr_t.into(), ptr_t.into(), i64_t.into()], false),
             None,
         );
+        let len = module.add_function(
+            "druk_rt_len",
+            void_t.fn_type(&[ptr_t.into(), ptr_t.into()], false),
+            None,
+        );
+        let push = module.add_function(
+            "druk_rt_push",
+            void_t.fn_type(&[ptr_t.into(), ptr_t.into(), ptr_t.into()], false),
+            None,
+        );
+        let pop = module.add_function(
+            "druk_rt_pop",
+            void_t.fn_type(&[ptr_t.into(), ptr_t.into()], false),
+            None,
+        );
+        let typeof_ = module.add_function(
+            "druk_rt_typeof",
+            void_t.fn_type(&[ptr_t.into(), ptr_t.into()], false),
+            None,
+        );
+        let input = module.add_function(
+            "druk_rt_input",
+            void_t.fn_type(&[ptr_t.into()], false),
+            None,
+        );
+        let argv =
+            module.add_function("druk_rt_argv", void_t.fn_type(&[ptr_t.into()], false), None);
+        let argc =
+            module.add_function("druk_rt_argc", void_t.fn_type(&[ptr_t.into()], false), None);
 
         Self {
             print,
@@ -146,6 +182,13 @@ impl<'ctx> RuntimeFns<'ctx> {
             make_closure,
             closure_function_ptr,
             closure_get_capture,
+            len,
+            push,
+            pop,
+            typeof_,
+            input,
+            argv,
+            argc,
         }
     }
 
@@ -210,5 +253,18 @@ impl<'ctx> RuntimeFns<'ctx> {
             &self.closure_get_capture,
             druk_runtime::druk_rt_closure_get_capture as *const () as usize,
         );
+        engine.add_global_mapping(&self.len, druk_runtime::druk_rt_len as *const () as usize);
+        engine.add_global_mapping(&self.push, druk_runtime::druk_rt_push as *const () as usize);
+        engine.add_global_mapping(&self.pop, druk_runtime::druk_rt_pop as *const () as usize);
+        engine.add_global_mapping(
+            &self.typeof_,
+            druk_runtime::druk_rt_typeof as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.input,
+            druk_runtime::druk_rt_input as *const () as usize,
+        );
+        engine.add_global_mapping(&self.argv, druk_runtime::druk_rt_argv as *const () as usize);
+        engine.add_global_mapping(&self.argc, druk_runtime::druk_rt_argc as *const () as usize);
     }
 }

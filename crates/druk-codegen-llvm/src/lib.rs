@@ -23,8 +23,9 @@ use druk_ir::Module as IrModule;
 use codegen::CodeGen;
 use runtime_fns::RuntimeFns;
 
-/// Compiles `module` and runs its top-level program via LLVM's JIT.
-pub fn run(module: &IrModule) -> Result<(), Diagnostic> {
+/// Compiles `module` and runs its top-level program via LLVM's JIT, with
+/// `args` as the program's own `argv`/`argc`.
+pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
     let context = Context::create();
     let llvm_module = context.create_module("druk");
     let builder = context.create_builder();
@@ -83,6 +84,7 @@ pub fn run(module: &IrModule) -> Result<(), Diagnostic> {
             Diagnostic::error(format!("failed to create the JIT execution engine: {err}"))
         })?;
     codegen.runtime.map_into(&engine);
+    druk_runtime::set_args(args.to_vec());
 
     unsafe {
         let jit_main = engine
@@ -119,7 +121,7 @@ mod tests {
         );
         let hir = druk_hir::check(ast).expect("source should type-check");
         let ir = druk_ir::lower(&hir).expect("hir should lower");
-        run(&ir).expect("module should compile and run");
+        run(&ir, &[]).expect("module should compile and run");
     }
 
     #[test]
@@ -163,6 +165,13 @@ mod tests {
     #[test]
     fn runs_closures_that_capture_a_variable() {
         compile_and_run("གྲངས་ n = ༥;\nགྲངས་ add_n = m -> m + n;\nབཀོད་ add_n(༣);");
+    }
+
+    #[test]
+    fn runs_len_push_pop_and_typeof_on_an_array() {
+        compile_and_run(
+            "གྲངས་[] xs = [༡, ༢, ༣];\nབཀོད་ རིང་ཚད(xs);\nསྣོན་(xs, ༤);\nབཀོད་ རིང་ཚད(xs);\nབཀོད་ བཏོན་(xs);\nབཀོད་ རིང་ཚད(xs);\nབཀོད་ རིགས་(xs);",
+        );
     }
 
     #[test]

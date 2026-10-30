@@ -91,13 +91,16 @@ way.
 ## Status
 
 The full pipeline (lexer, parser, HIR, IR, LLVM codegen, JIT execution, a real mark-and-sweep GC)
-runs end to end on both Linux and Windows, verified by CI. All 12 bundled `examples/*.druk`
-programs compile and execute correctly via `druk run`, including structs and closures that
-capture a variable from their immediately enclosing scope.
+runs end to end on both Linux and Windows, verified by CI. All 20 bundled `examples/*.druk`
+programs compile and execute correctly via `druk run`, including structs, closures that capture a
+variable from their immediately enclosing scope, and the Dzongkha builtins `len`, `push`, `pop`,
+`typeof`, `input`, `argv`, and `argc` (`argv`/`argc` reflect the program's own real command-line
+arguments, passed after the script path to `druk run`).
 
 Known gaps, none of which the bundled examples need:
 
-- The Dzongkha builtins (`len`, `push`, `pop`, `typeof`, `keys`, `values`, `contains`, `input`)
+- `keys`, `values`, and `contains`, which depend on a dictionary/map type this compiler doesn't
+  have yet
 - Lambdas nested two or more levels deep capturing from further than their immediate enclosing
   scope
 - Native (ahead-of-time) compilation to a standalone executable; currently JIT-only via `druk run`
