@@ -85,7 +85,20 @@ pub fn run(module: &IrModule) -> Result<(), Diagnostic> {
 mod tests {
     use super::*;
 
+    /// Every compiled program in this test binary shares one process-wide
+    /// heap and frame stack (both are statics inside `druk-runtime`). Now
+    /// that `Heap::collect` actually reclaims memory, two of these tests
+    /// running concurrently on different threads (the default `cargo test`
+    /// behavior) could collect an object another test is still using —
+    /// `collection_triggered_inside_a_nested_call_spares_a_live_outer_local`
+    /// deliberately forces a collection, so every test funnels through this
+    /// lock via `compile_and_run` to serialize against it.
+    static TEST_HEAP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn compile_and_run(source: &str) {
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (ast, parse_diagnostics) = druk_parser::parse(source);
         assert!(
             parse_diagnostics.is_empty(),
