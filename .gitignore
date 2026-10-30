@@ -19,3 +19,4 @@ debug_*.txt
 *.snap.new
 *.lib
 .llvm-stub-libs/
+/benches/results/
