@@ -1,0 +1,6 @@
+གྲངས་ point = {x: ༡, y: ༢};
+བཀོད་ point.x;
+བཀོད་ point.y;
+
+point.y = ༩༩;
+བཀོད་ point.y;
