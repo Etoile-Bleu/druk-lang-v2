@@ -7,7 +7,7 @@
 //! pointer (`*const RtValue` in, `*mut RtValue` out), never by value. A
 //! 16-byte struct crosses the Windows x64 "C" ABI through a hidden `sret`
 //! return slot and `byval` argument copies, but the x86-64 SysV ABI (Linux,
-//! macOS) returns and passes the same struct directly in two registers —
+//! macOS) returns and passes the same struct directly in two registers:
 //! two genuinely different calling conventions for the same Rust signature.
 //! Passing everything by pointer sidesteps that difference entirely: a
 //! pointer is passed in a register the same way on every platform, so
@@ -123,8 +123,8 @@ fn heap() -> &'static Mutex<Heap> {
 /// - A "pending siblings" buffer (`druk-codegen-llvm`'s
 ///   `compile_rooted_siblings`) spanning the evaluation of a list of
 ///   sub-expressions that are each computed before any of them is consumed
-///   — an array literal's elements, a call's arguments, a binary
-///   expression's operands — so a later sibling's own allocation can't
+///   (an array literal's elements, a call's arguments, a binary
+///   expression's operands), so a later sibling's own allocation can't
 ///   collect an earlier one that was never stored into a named local.
 static FRAME_STACK: OnceLock<Mutex<Vec<(usize, usize)>>> = OnceLock::new();
 
@@ -166,7 +166,7 @@ fn gather_roots(extra: &[Value]) -> Vec<Value> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut roots = Vec::new();
     for &(ptr, count) in frames.iter() {
-        // SAFETY: see `FRAME_STACK`'s doc comment — every registered frame's
+        // SAFETY: see `FRAME_STACK`'s doc comment. Every registered frame's
         // pointer is still valid for exactly `count` `RtValue`s.
         let slice = unsafe { std::slice::from_raw_parts(ptr as *const RtValue, count) };
         roots.extend(slice.iter().map(|value| value.to_value()));
