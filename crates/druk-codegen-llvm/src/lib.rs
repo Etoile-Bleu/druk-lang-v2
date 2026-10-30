@@ -1,5 +1,5 @@
 //! LLVM backend: lowers a [`druk_ir::Module`] into LLVM IR and JIT-executes
-//! it. The only crate in the workspace allowed to depend on LLVM — every
+//! it. The only crate in the workspace allowed to depend on LLVM: every
 //! `unsafe` call here is either an `inkwell` builder call whose only
 //! failure mode is a malformed IR (an internal compiler error, reported via
 //! [`druk_diagnostics::ice`]) or a raw pointer operation whose contract is
@@ -89,7 +89,7 @@ mod tests {
     /// heap and frame stack (both are statics inside `druk-runtime`). Now
     /// that `Heap::collect` actually reclaims memory, two of these tests
     /// running concurrently on different threads (the default `cargo test`
-    /// behavior) could collect an object another test is still using —
+    /// behavior) could collect an object another test is still using, and
     /// `collection_triggered_inside_a_nested_call_spares_a_live_outer_local`
     /// deliberately forces a collection, so every test funnels through this
     /// lock via `compile_and_run` to serialize against it.
