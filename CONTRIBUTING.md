@@ -133,12 +133,12 @@ cargo test --workspace # Run tests
 
 - No `unwrap()`, `expect()`, or `panic!()` outside of tests or the dedicated `ice!()` path for
   genuine compiler-bug invariants (this is a workspace-level deny `clippy` lint, not a style
-  preference) — see `ErrorHandling.md` in the `DrukCompiler` reference if you have access to it,
+  preference), see `ErrorHandling.md` in the `DrukCompiler` reference if you have access to it,
   or simply: every user-facing failure (bad token, parse error, unresolved name, type mismatch) is
   a `Diagnostic` returned through a `Result`, never a panic.
 - `druk-lexer`, `druk-ast`, `druk-parser`, `druk-hir`, and `druk-ir` never depend on `inkwell` or
   `llvm-sys`. Only `druk-codegen-llvm` may use LLVM types.
-- `druk-gc` never exposes a raw pointer across its public API — heap objects are referenced by
+- `druk-gc` never exposes a raw pointer across its public API: heap objects are referenced by
   `Handle` (an index), never by `*mut T`.
 - No comments in the code except `// SAFETY:` above an `unsafe` block, explaining the invariant
   that makes it sound. Naming and small functions carry the explanation instead.
