@@ -51,6 +51,7 @@ pub enum Value {
     Bool(bool),
     Str(Handle),
     Array(Handle),
+    Struct(Handle),
     /// A raw native function pointer, cast back to a callable at the call
     /// site. Functions are static code, not heap objects, so this never
     /// needs a `Handle` or GC tracing.
@@ -60,7 +61,7 @@ pub enum Value {
 impl Value {
     fn as_handle(&self) -> Option<Handle> {
         match self {
-            Value::Str(handle) | Value::Array(handle) => Some(*handle),
+            Value::Str(handle) | Value::Array(handle) | Value::Struct(handle) => Some(*handle),
             Value::Nil | Value::Number(_) | Value::Bool(_) | Value::Function(_) => None,
         }
     }
@@ -70,6 +71,7 @@ impl Value {
 enum Object {
     Str(String),
     Array(Vec<Value>),
+    Struct(Vec<(String, Value)>),
 }
 
 #[derive(Debug)]
@@ -152,6 +154,10 @@ impl Heap {
         self.alloc(Object::Array(elements))
     }
 
+    pub fn alloc_struct(&mut self, fields: Vec<(String, Value)>) -> Handle {
+        self.alloc(Object::Struct(fields))
+    }
+
     fn object(&self, handle: Handle) -> &Object {
         match &self.slots[handle.index()] {
             Slot::Live { object, .. } => object,
@@ -170,6 +176,7 @@ impl Heap {
         match self.object(handle) {
             Object::Str(value) => value,
             Object::Array(_) => ice!("get_string called on a handle that holds an array"),
+            Object::Struct(_) => ice!("get_string called on a handle that holds a struct"),
         }
     }
 
@@ -177,6 +184,7 @@ impl Heap {
         match self.object(handle) {
             Object::Array(elements) => elements,
             Object::Str(_) => ice!("get_array called on a handle that holds a string"),
+            Object::Struct(_) => ice!("get_array called on a handle that holds a struct"),
         }
     }
 
@@ -199,6 +207,38 @@ impl Heap {
                 }
             }
             Object::Str(_) => ice!("array_set called on a handle that holds a string"),
+            Object::Struct(_) => ice!("array_set called on a handle that holds a struct"),
+        }
+    }
+
+    /// Returns the value of `field` on the struct at `handle`, or `Nil` if
+    /// the struct has no field by that name, the same not-found-is-nil
+    /// convention `array_get` uses for an out-of-bounds index.
+    pub fn struct_get(&self, handle: Handle, field: &str) -> Value {
+        match self.object(handle) {
+            Object::Struct(fields) => fields
+                .iter()
+                .find(|(name, _)| name == field)
+                .map(|(_, value)| *value)
+                .unwrap_or(Value::Nil),
+            Object::Str(_) => ice!("struct_get called on a handle that holds a string"),
+            Object::Array(_) => ice!("struct_get called on a handle that holds an array"),
+        }
+    }
+
+    /// Overwrites `field` on the struct at `handle`. A struct's fields are
+    /// fixed at construction (its literal), so setting a field that doesn't
+    /// exist is a no-op, the same convention `array_set` uses for an
+    /// out-of-bounds index, rather than growing the struct dynamically.
+    pub fn struct_set(&mut self, handle: Handle, field: &str, value: Value) {
+        match self.object_mut(handle) {
+            Object::Struct(fields) => {
+                if let Some(slot) = fields.iter_mut().find(|(name, _)| name == field) {
+                    slot.1 = value;
+                }
+            }
+            Object::Str(_) => ice!("struct_set called on a handle that holds a string"),
+            Object::Array(_) => ice!("struct_set called on a handle that holds an array"),
         }
     }
 
@@ -220,12 +260,16 @@ impl Heap {
             if already_marked {
                 continue;
             }
-            if let Slot::Live {
-                object: Object::Array(elements),
-                ..
-            } = &self.slots[handle.index()]
-            {
-                worklist.extend(elements.iter().filter_map(Value::as_handle));
+            match &self.slots[handle.index()] {
+                Slot::Live {
+                    object: Object::Array(elements),
+                    ..
+                } => worklist.extend(elements.iter().filter_map(Value::as_handle)),
+                Slot::Live {
+                    object: Object::Struct(fields),
+                    ..
+                } => worklist.extend(fields.iter().filter_map(|(_, value)| value.as_handle())),
+                _ => {}
             }
         }
 
@@ -326,6 +370,60 @@ mod tests {
 
         let reused = heap.alloc_array(vec![Value::Number(2)]);
         assert!(reused.index() < 2, "expected a freed slot to be reused");
+    }
+
+    #[test]
+    fn allocates_and_reads_back_a_struct_field() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_struct(vec![
+            ("x".to_string(), Value::Number(1)),
+            ("y".to_string(), Value::Number(2)),
+        ]);
+        assert_eq!(heap.struct_get(handle, "y"), Value::Number(2));
+    }
+
+    #[test]
+    fn struct_get_on_a_missing_field_returns_nil() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_struct(vec![("x".to_string(), Value::Number(1))]);
+        assert_eq!(heap.struct_get(handle, "missing"), Value::Nil);
+    }
+
+    #[test]
+    fn writes_through_struct_set() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_struct(vec![("x".to_string(), Value::Number(1))]);
+        heap.struct_set(handle, "x", Value::Number(99));
+        assert_eq!(heap.struct_get(handle, "x"), Value::Number(99));
+    }
+
+    #[test]
+    fn struct_set_on_a_missing_field_is_a_no_op() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_struct(vec![("x".to_string(), Value::Number(1))]);
+        heap.struct_set(handle, "missing", Value::Number(99));
+        assert_eq!(heap.struct_get(handle, "missing"), Value::Nil);
+        assert_eq!(heap.struct_get(handle, "x"), Value::Number(1));
+    }
+
+    #[test]
+    fn collect_traces_through_a_struct_field() {
+        let mut heap = Heap::new();
+        let inner = heap.alloc_string("nested".to_string());
+        let outer = heap.alloc_struct(vec![("s".to_string(), Value::Str(inner))]);
+        heap.collect(&[Value::Struct(outer)]);
+
+        assert_eq!(heap.get_string(inner), "nested");
+    }
+
+    #[test]
+    fn collect_frees_a_struct_once_its_only_reference_is_gone() {
+        let mut heap = Heap::new();
+        heap.alloc_struct(vec![("x".to_string(), Value::Number(1))]);
+        heap.collect(&[]);
+
+        let reused = heap.alloc_struct(vec![("y".to_string(), Value::Number(2))]);
+        assert!(reused.index() < 1, "expected the freed slot to be reused");
     }
 
     #[test]
