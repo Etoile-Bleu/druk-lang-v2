@@ -18,7 +18,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let len = values.len() as u32;
         let array_ty = self.value_ty.array_type(len);
-        let buffer = unwrap_build(self.builder.build_alloca(array_ty, "array_buffer"));
+        let buffer = self.build_entry_alloca(function, array_ty, "array_buffer");
         for (index, value) in values.into_iter().enumerate() {
             let elem_ptr = self.array_slot_ptr(array_ty, buffer, index as u32);
             unwrap_build(self.builder.build_store(elem_ptr, value));
@@ -26,6 +26,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let len_value = self.context.i64_type().const_int(len as u64, false);
         Ok(self.call_with_out_param(
+            function,
             self.runtime.make_array,
             &[buffer.into(), len_value.into()],
             "call_make_array",
@@ -53,7 +54,7 @@ impl<'ctx> CodeGen<'ctx> {
         let field_ty = self.field_ty();
         let len = values.len() as u32;
         let buffer_ty = field_ty.array_type(len);
-        let buffer = unwrap_build(self.builder.build_alloca(buffer_ty, "struct_fields"));
+        let buffer = self.build_entry_alloca(function, buffer_ty, "struct_fields");
         let i32_ty = self.context.i32_type();
 
         for (index, ((name, _), value)) in fields.iter().zip(values).enumerate() {
@@ -108,6 +109,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let len_value = self.context.i64_type().const_int(len as u64, false);
         Ok(self.call_with_out_param(
+            function,
             self.runtime.make_struct,
             &[buffer.into(), len_value.into()],
             "call_make_struct",
