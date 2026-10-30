@@ -479,7 +479,47 @@ impl<'ctx> CodeGen<'ctx> {
                     "call_array_set",
                 )
             }
+            IrExpr::StructLiteral(fields) => self.compile_struct_literal(fields, function)?,
+            IrExpr::FieldGet(object, field) => {
+                let object_value = self.compile_expr(object, function)?;
+                let object_ptr = self.value_ptr(object_value);
+                let (name_ptr, name_len) = self.compile_field_name(field);
+                self.call_with_out_param(
+                    self.runtime.struct_get,
+                    &[object_ptr.into(), name_ptr.into(), name_len.into()],
+                    "call_struct_get",
+                )
+            }
+            IrExpr::FieldSet(object, field, value) => {
+                let operands =
+                    self.compile_rooted_siblings(&[object.as_ref(), value.as_ref()], function)?;
+                let object_ptr = self.value_ptr(operands[0]);
+                let value_ptr = self.value_ptr(operands[1]);
+                let (name_ptr, name_len) = self.compile_field_name(field);
+                self.call_with_out_param(
+                    self.runtime.struct_set,
+                    &[
+                        object_ptr.into(),
+                        name_ptr.into(),
+                        name_len.into(),
+                        value_ptr.into(),
+                    ],
+                    "call_struct_set",
+                )
+            }
         })
+    }
+
+    /// Embeds `name` as a compile-time constant and returns a pointer to its
+    /// bytes plus its length, the shape `druk_rt_struct_get`/
+    /// `druk_rt_struct_set` expect for a field name. A struct field's name
+    /// is always a literal identifier in the source, never a dynamically
+    /// computed value, so unlike an array index it never needs rooting.
+    fn compile_field_name(&self, name: &str) -> (PointerValue<'ctx>, IntValue<'ctx>) {
+        let global = unwrap_build(self.builder.build_global_string_ptr(name, "field_name"));
+        let ptr = global.as_pointer_value();
+        let len = self.context.i64_type().const_int(name.len() as u64, false);
+        (ptr, len)
     }
 
     fn compile_string_literal(&self, value: &str) -> StructValue<'ctx> {
@@ -681,6 +721,88 @@ impl<'ctx> CodeGen<'ctx> {
             self.runtime.make_array,
             &[buffer.into(), len_value.into()],
             "call_make_array",
+        ))
+    }
+
+    /// The `RtField { name_ptr: ptr, name_len: i64, value: RtValue }` type
+    /// `compile_struct_literal` builds a buffer of, matching `druk-runtime`'s
+    /// `#[repr(C)]` struct field for field.
+    fn field_ty(&self) -> StructType<'ctx> {
+        let ptr_t = self.context.ptr_type(AddressSpace::default());
+        let i64_t = self.context.i64_type();
+        self.context
+            .struct_type(&[ptr_t.into(), i64_t.into(), self.value_ty.into()], false)
+    }
+
+    fn compile_struct_literal(
+        &mut self,
+        fields: &[(String, IrExpr)],
+        function: FunctionValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, Diagnostic> {
+        let value_exprs: Vec<&IrExpr> = fields.iter().map(|(_, value)| value).collect();
+        let values = self.compile_rooted_siblings(&value_exprs, function)?;
+
+        let field_ty = self.field_ty();
+        let len = values.len() as u32;
+        let buffer_ty = field_ty.array_type(len);
+        let buffer = unwrap_build(self.builder.build_alloca(buffer_ty, "struct_fields"));
+        let i32_ty = self.context.i32_type();
+
+        for (index, ((name, _), value)) in fields.iter().zip(values).enumerate() {
+            let (name_ptr, name_len) = self.compile_field_name(name);
+            // SAFETY: `index` ranges over `0..len`, the exact bound
+            // `buffer_ty` was created with, and `buffer` was just allocated
+            // by this same builder in this same function, so each GEP stays
+            // in bounds. The third index selects one of `field_ty`'s three
+            // fixed fields, always in range.
+            let name_ptr_slot = unsafe {
+                unwrap_build(self.builder.build_gep(
+                    buffer_ty,
+                    buffer,
+                    &[
+                        i32_ty.const_zero(),
+                        i32_ty.const_int(index as u64, false),
+                        i32_ty.const_zero(),
+                    ],
+                    "field_name_ptr_slot",
+                ))
+            };
+            unwrap_build(self.builder.build_store(name_ptr_slot, name_ptr));
+
+            let name_len_slot = unsafe {
+                unwrap_build(self.builder.build_gep(
+                    buffer_ty,
+                    buffer,
+                    &[
+                        i32_ty.const_zero(),
+                        i32_ty.const_int(index as u64, false),
+                        i32_ty.const_int(1, false),
+                    ],
+                    "field_name_len_slot",
+                ))
+            };
+            unwrap_build(self.builder.build_store(name_len_slot, name_len));
+
+            let value_slot = unsafe {
+                unwrap_build(self.builder.build_gep(
+                    buffer_ty,
+                    buffer,
+                    &[
+                        i32_ty.const_zero(),
+                        i32_ty.const_int(index as u64, false),
+                        i32_ty.const_int(2, false),
+                    ],
+                    "field_value_slot",
+                ))
+            };
+            unwrap_build(self.builder.build_store(value_slot, value));
+        }
+
+        let len_value = self.context.i64_type().const_int(len as u64, false);
+        Ok(self.call_with_out_param(
+            self.runtime.make_struct,
+            &[buffer.into(), len_value.into()],
+            "call_make_struct",
         ))
     }
 }

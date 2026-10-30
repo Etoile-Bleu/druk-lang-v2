@@ -12,6 +12,9 @@ pub(crate) struct RuntimeFns<'ctx> {
     pub(crate) array_set: FunctionValue<'ctx>,
     pub(crate) values_equal: FunctionValue<'ctx>,
     pub(crate) is_truthy: FunctionValue<'ctx>,
+    pub(crate) make_struct: FunctionValue<'ctx>,
+    pub(crate) struct_get: FunctionValue<'ctx>,
+    pub(crate) struct_set: FunctionValue<'ctx>,
     pub(crate) push_frame: FunctionValue<'ctx>,
     pub(crate) pop_frame: FunctionValue<'ctx>,
 }
@@ -72,6 +75,33 @@ impl<'ctx> RuntimeFns<'ctx> {
             i64_t.fn_type(&[ptr_t.into()], false),
             None,
         );
+        let make_struct = module.add_function(
+            "druk_rt_make_struct",
+            void_t.fn_type(&[ptr_t.into(), ptr_t.into(), i64_t.into()], false),
+            None,
+        );
+        let struct_get = module.add_function(
+            "druk_rt_struct_get",
+            void_t.fn_type(
+                &[ptr_t.into(), ptr_t.into(), ptr_t.into(), i64_t.into()],
+                false,
+            ),
+            None,
+        );
+        let struct_set = module.add_function(
+            "druk_rt_struct_set",
+            void_t.fn_type(
+                &[
+                    ptr_t.into(),
+                    ptr_t.into(),
+                    ptr_t.into(),
+                    i64_t.into(),
+                    ptr_t.into(),
+                ],
+                false,
+            ),
+            None,
+        );
         let push_frame = module.add_function(
             "druk_rt_push_frame",
             void_t.fn_type(&[ptr_t.into(), i64_t.into()], false),
@@ -87,6 +117,9 @@ impl<'ctx> RuntimeFns<'ctx> {
             array_set,
             values_equal,
             is_truthy,
+            make_struct,
+            struct_get,
+            struct_set,
             push_frame,
             pop_frame,
         }
@@ -120,6 +153,18 @@ impl<'ctx> RuntimeFns<'ctx> {
         engine.add_global_mapping(
             &self.is_truthy,
             druk_runtime::druk_rt_is_truthy as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.make_struct,
+            druk_runtime::druk_rt_make_struct as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.struct_get,
+            druk_runtime::druk_rt_struct_get as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.struct_set,
+            druk_runtime::druk_rt_struct_set as *const () as usize,
         );
         engine.add_global_mapping(
             &self.push_frame,

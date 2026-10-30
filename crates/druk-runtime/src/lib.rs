@@ -29,6 +29,7 @@ pub const TAG_BOOL: i64 = 2;
 pub const TAG_STR: i64 = 3;
 pub const TAG_ARRAY: i64 = 4;
 pub const TAG_FUNCTION: i64 = 5;
+pub const TAG_STRUCT: i64 = 6;
 
 /// The ABI boundary type: a fixed `{i64, i64}` layout so codegen can build
 /// and read one directly as an LLVM struct, with no padding ambiguity.
@@ -82,6 +83,7 @@ impl RtValue {
             TAG_BOOL => Value::Bool(self.payload != 0),
             TAG_STR => Value::Str(handle_from_raw_index(self.payload as u32)),
             TAG_ARRAY => Value::Array(handle_from_raw_index(self.payload as u32)),
+            TAG_STRUCT => Value::Struct(handle_from_raw_index(self.payload as u32)),
             TAG_FUNCTION => Value::Function(self.payload as usize),
             _ => Value::Nil,
         }
@@ -100,9 +102,26 @@ impl RtValue {
                 tag: TAG_ARRAY,
                 payload: handle.index() as i64,
             },
+            Value::Struct(handle) => RtValue {
+                tag: TAG_STRUCT,
+                payload: handle.index() as i64,
+            },
             Value::Function(pointer) => RtValue::function(pointer),
         }
     }
+}
+
+/// One `name: value` pair of a struct literal as codegen assembles it: a
+/// pointer to the field name's bytes (a compile-time constant, embedded the
+/// same way a string literal's bytes are) alongside the already-computed
+/// `RtValue`. `#[repr(C)]` so `druk-codegen-llvm` can build an array of
+/// these as a plain LLVM struct type, the same way [`RtValue`] itself
+/// crosses the FFI boundary.
+#[repr(C)]
+pub struct RtField {
+    pub name_ptr: *const u8,
+    pub name_len: usize,
+    pub value: RtValue,
 }
 
 static HEAP: OnceLock<Mutex<Heap>> = OnceLock::new();
@@ -194,6 +213,7 @@ fn format_value(value: RtValue) -> String {
             guard.get_string(handle).to_string()
         }
         TAG_ARRAY => "[array]".to_string(),
+        TAG_STRUCT => "[struct]".to_string(),
         _ => "<function>".to_string(),
     }
 }
@@ -313,6 +333,93 @@ pub unsafe extern "C" fn druk_rt_array_set(
 }
 
 /// # Safety
+/// `out` must point to a valid, writable `RtValue` slot. `fields` must
+/// point to at least `len` valid, initialized contiguous [`RtField`]
+/// entries, each with `name_ptr` valid for `name_len` bytes, alive for the
+/// duration of this call. Codegen only ever passes a pointer to a stack
+/// buffer it just finished writing, with each field's name pointing at a
+/// compile-time constant embedded in the module.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_make_struct(
+    out: *mut RtValue,
+    fields: *const RtField,
+    len: usize,
+) {
+    let slice = std::slice::from_raw_parts(fields, len);
+    let values: Vec<(String, Value)> = slice
+        .iter()
+        .map(|field| {
+            let name_bytes = std::slice::from_raw_parts(field.name_ptr, field.name_len);
+            let name = String::from_utf8_lossy(name_bytes).into_owned();
+            (name, field.value.to_value())
+        })
+        .collect();
+    let mut guard = heap()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let extra: Vec<Value> = values.iter().map(|(_, value)| *value).collect();
+    maybe_collect(&mut guard, &extra);
+    let handle = guard.alloc_struct(values);
+    *out = RtValue {
+        tag: TAG_STRUCT,
+        payload: handle.index() as i64,
+    };
+}
+
+/// # Safety
+/// `out` and `object` must each point to a valid `RtValue` (`out`
+/// writable). `name_ptr` must be valid for `name_len` bytes. All alive for
+/// the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_struct_get(
+    out: *mut RtValue,
+    object: *const RtValue,
+    name_ptr: *const u8,
+    name_len: usize,
+) {
+    let object = *object;
+    if object.tag != TAG_STRUCT {
+        *out = RtValue::nil();
+        return;
+    }
+    let name_bytes = std::slice::from_raw_parts(name_ptr, name_len);
+    let name = String::from_utf8_lossy(name_bytes);
+    let handle = handle_from_raw_index(object.payload as u32);
+    let guard = heap()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *out = RtValue::from_value(guard.struct_get(handle, &name));
+}
+
+/// # Safety
+/// `out`, `object`, and `value` must each point to a valid `RtValue` (`out`
+/// writable). `name_ptr` must be valid for `name_len` bytes. All alive for
+/// the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_struct_set(
+    out: *mut RtValue,
+    object: *const RtValue,
+    name_ptr: *const u8,
+    name_len: usize,
+    value: *const RtValue,
+) {
+    let object = *object;
+    let value = *value;
+    if object.tag != TAG_STRUCT {
+        *out = value;
+        return;
+    }
+    let name_bytes = std::slice::from_raw_parts(name_ptr, name_len);
+    let name = String::from_utf8_lossy(name_bytes);
+    let handle = handle_from_raw_index(object.payload as u32);
+    let mut guard = heap()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.struct_set(handle, &name, value.to_value());
+    *out = value;
+}
+
+/// # Safety
 /// `out`, `a`, and `b` must each point to a valid `RtValue` (`out`
 /// writable), alive for the duration of this call.
 #[no_mangle]
@@ -380,6 +487,32 @@ mod tests {
         out
     }
 
+    unsafe fn make_struct(fields: &[(&str, RtValue)]) -> RtValue {
+        let entries: Vec<RtField> = fields
+            .iter()
+            .map(|(name, value)| RtField {
+                name_ptr: name.as_ptr(),
+                name_len: name.len(),
+                value: *value,
+            })
+            .collect();
+        let mut out = RtValue::nil();
+        druk_rt_make_struct(&mut out, entries.as_ptr(), entries.len());
+        out
+    }
+
+    unsafe fn struct_get(object: RtValue, name: &str) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_struct_get(&mut out, &object, name.as_ptr(), name.len());
+        out
+    }
+
+    unsafe fn struct_set(object: RtValue, name: &str, value: RtValue) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_struct_set(&mut out, &object, name.as_ptr(), name.len(), &value);
+        out
+    }
+
     #[test]
     fn prints_a_number_and_a_string() {
         let _guard = TEST_HEAP_LOCK
@@ -415,6 +548,38 @@ mod tests {
         let array = unsafe { make_array(&elements) };
         unsafe { array_set(array, RtValue::number(1), RtValue::number(99)) };
         let got = unsafe { array_get(array, RtValue::number(1)) };
+        assert_eq!(got.payload, 99);
+    }
+
+    #[test]
+    fn builds_and_reads_a_struct_field() {
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let point = unsafe { make_struct(&[("x", RtValue::number(1)), ("y", RtValue::number(2))]) };
+        let got = unsafe { struct_get(point, "y") };
+        assert_eq!(got.tag, TAG_NUMBER);
+        assert_eq!(got.payload, 2);
+    }
+
+    #[test]
+    fn struct_get_on_a_missing_field_returns_nil() {
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let point = unsafe { make_struct(&[("x", RtValue::number(1))]) };
+        let got = unsafe { struct_get(point, "missing") };
+        assert_eq!(got.tag, TAG_NIL);
+    }
+
+    #[test]
+    fn struct_set_writes_through() {
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let point = unsafe { make_struct(&[("x", RtValue::number(1))]) };
+        unsafe { struct_set(point, "x", RtValue::number(99)) };
+        let got = unsafe { struct_get(point, "x") };
         assert_eq!(got.payload, 99);
     }
 
