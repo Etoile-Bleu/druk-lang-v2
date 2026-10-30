@@ -18,8 +18,7 @@ mod statements;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::types::ArrayType;
-use inkwell::types::StructType;
+use inkwell::types::{ArrayType, BasicType, StructType};
 use inkwell::values::{
     BasicMetadataValueEnum, CallSiteValue, FunctionValue, IntValue, PointerValue, StructValue,
     ValueKind,
@@ -121,6 +120,45 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    /// Allocates a stack slot in `function`'s entry block, regardless of
+    /// where the builder is currently positioned, and restores that
+    /// position afterward. Every `alloca` outside of `compile_function`'s
+    /// own locals array must go through this rather than a direct
+    /// `build_alloca`: an `alloca` executed at the builder's current
+    /// position would, when that position is inside a loop or `if` body,
+    /// re-execute (and so grow the stack by another slot) on every pass
+    /// through that block, eventually overflowing the native stack on any
+    /// loop with enough iterations. An entry-block `alloca` runs exactly
+    /// once per call instead, which is the standard fix for this across
+    /// every LLVM frontend that doesn't run a stack-promotion pass (this
+    /// backend compiles at `OptimizationLevel::None`, so none does).
+    fn build_entry_alloca(
+        &self,
+        function: FunctionValue<'ctx>,
+        ty: impl BasicType<'ctx>,
+        name: &str,
+    ) -> PointerValue<'ctx> {
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .unwrap_or_else(|| ice!("build_entry_alloca called with no current insertion block"));
+        let entry = function
+            .get_first_basic_block()
+            .unwrap_or_else(|| ice!("build_entry_alloca called on a function with no entry block"));
+        // The entry block already has a terminator (a branch into the
+        // function's first loop/if) as soon as any control flow has been
+        // compiled before this point, so appending at its end would insert
+        // after that terminator, producing invalid IR. Insert before it
+        // instead; fall back to appending only while entry has none yet.
+        match entry.get_terminator() {
+            Some(terminator) => self.builder.position_before(&terminator),
+            None => self.builder.position_at_end(entry),
+        }
+        let alloca = unwrap_build(self.builder.build_alloca(ty, name));
+        self.builder.position_at_end(current_block);
+        alloca
+    }
+
     /// Points at local slot `slot` inside the current function's locals
     /// array. Only valid between `compile_function` allocating that array
     /// and returning from it.
@@ -178,7 +216,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let len = exprs.len() as u32;
         let buffer_ty = self.value_ty.array_type(len);
-        let buffer = unwrap_build(self.builder.build_alloca(buffer_ty, "pending_siblings"));
+        let buffer = self.build_entry_alloca(function, buffer_ty, "pending_siblings");
 
         // Every slot starts out as a safe sentinel (tag = nil), so a
         // collection that fires before a later slot is written never traces
@@ -236,14 +274,18 @@ impl<'ctx> CodeGen<'ctx> {
     /// for passing a runtime function an `RtValue` argument. See the
     /// `druk_runtime` module doc comment for why every `RtValue` crosses
     /// this FFI boundary through a pointer rather than by value.
-    fn value_ptr(&self, value: StructValue<'ctx>) -> PointerValue<'ctx> {
-        let slot = unwrap_build(self.builder.build_alloca(self.value_ty, "value_tmp"));
+    fn value_ptr(
+        &self,
+        function: FunctionValue<'ctx>,
+        value: StructValue<'ctx>,
+    ) -> PointerValue<'ctx> {
+        let slot = self.build_entry_alloca(function, self.value_ty, "value_tmp");
         unwrap_build(self.builder.build_store(slot, value));
         slot
     }
 
-    fn is_truthy(&self, value: StructValue<'ctx>) -> IntValue<'ctx> {
-        let ptr = self.value_ptr(value);
+    fn is_truthy(&self, function: FunctionValue<'ctx>, value: StructValue<'ctx>) -> IntValue<'ctx> {
+        let ptr = self.value_ptr(function, value);
         let call = unwrap_build(self.builder.build_call(
             self.runtime.is_truthy,
             &[ptr.into()],
@@ -307,17 +349,20 @@ impl<'ctx> CodeGen<'ctx> {
     /// argument, then load the result back out. `args` are the rest of the
     /// callee's parameters, already assembled by the caller (themselves
     /// plain integers or pointers from `value_ptr`, never a struct passed
-    /// by value, see the `druk_runtime` module doc comment).
+    /// by value, see the `druk_runtime` module doc comment). `function` is
+    /// the Druk function currently being compiled (for `build_entry_alloca`),
+    /// distinct from `callee`, the runtime function this call invokes.
     fn call_with_out_param(
         &self,
         function: FunctionValue<'ctx>,
+        callee: FunctionValue<'ctx>,
         args: &[BasicMetadataValueEnum<'ctx>],
         name: &str,
     ) -> StructValue<'ctx> {
-        let out = unwrap_build(self.builder.build_alloca(self.value_ty, "out"));
+        let out = self.build_entry_alloca(function, self.value_ty, "out");
         let mut full_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![out.into()];
         full_args.extend_from_slice(args);
-        unwrap_build(self.builder.build_call(function, &full_args, name));
+        unwrap_build(self.builder.build_call(callee, &full_args, name));
         unwrap_build(self.builder.build_load(self.value_ty, out, "out_load")).into_struct_value()
     }
 }
