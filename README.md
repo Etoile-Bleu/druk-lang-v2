@@ -91,7 +91,7 @@ way.
 ## Status
 
 The full pipeline (lexer, parser, HIR, IR, LLVM codegen, JIT execution, a real mark-and-sweep GC)
-runs end to end on both Linux and Windows, verified by CI. All 13 bundled `examples/*.druk`
+runs end to end on both Linux and Windows, verified by CI. All 20 bundled `examples/*.druk`
 programs compile and execute correctly via `druk run`, including structs, closures that capture a
 variable from their immediately enclosing scope, and the Dzongkha builtins `len`, `push`, `pop`,
 `typeof`, `input`, `argv`, and `argc` (`argv`/`argc` reflect the program's own real command-line
