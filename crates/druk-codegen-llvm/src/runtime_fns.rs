@@ -18,7 +18,7 @@ pub(crate) struct RuntimeFns<'ctx> {
 
 impl<'ctx> RuntimeFns<'ctx> {
     /// Every `druk_rt_*` function that takes or returns an `RtValue` does so
-    /// through a plain pointer, never by value — see the module doc comment
+    /// through a plain pointer, never by value. See the module doc comment
     /// on `druk_runtime` for why: a 16-byte struct crosses the Windows x64
     /// "C" ABI through a hidden `sret` slot and `byval` argument copies, but
     /// the x86-64 SysV ABI (Linux, macOS) returns and passes the same struct
