@@ -14,7 +14,10 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<StructValue<'ctx>, Diagnostic> {
         let arg_refs: Vec<&IrExpr> = args.iter().collect();
         let values = self.compile_rooted_siblings(&arg_refs, function)?;
-        let arg_ptrs: Vec<_> = values.iter().map(|value| self.value_ptr(*value)).collect();
+        let arg_ptrs: Vec<_> = values
+            .iter()
+            .map(|value| self.value_ptr(function, *value))
+            .collect();
 
         let runtime_fn = match op {
             BuiltinOp::Len => self.runtime.len,
@@ -26,6 +29,6 @@ impl<'ctx> CodeGen<'ctx> {
             BuiltinOp::Argc => self.runtime.argc,
         };
         let call_args: Vec<_> = arg_ptrs.iter().map(|ptr| (*ptr).into()).collect();
-        Ok(self.call_with_out_param(runtime_fn, &call_args, "call_builtin"))
+        Ok(self.call_with_out_param(function, runtime_fn, &call_args, "call_builtin"))
     }
 }

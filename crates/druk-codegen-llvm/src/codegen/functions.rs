@@ -54,6 +54,7 @@ impl<'ctx> CodeGen<'ctx> {
                     .i64_type()
                     .const_int(closure_index as u64, false);
                 let capture = self.call_with_out_param(
+                    function_value,
                     self.runtime.closure_get_capture,
                     &[self_ptr.into(), index_value.into()],
                     "call_closure_get_capture",
