@@ -136,6 +136,13 @@ mod tests {
     }
 
     #[test]
+    fn runs_structs() {
+        compile_and_run(
+            "གྲངས་ point = {x: ༡, y: ༢};\nབཀོད་ point.x;\nབཀོད་ point.y;\npoint.y = ༩༩;\nབཀོད་ point.y;\nབཀོད་ point.missing;",
+        );
+    }
+
+    #[test]
     fn runs_lambdas() {
         compile_and_run("གྲངས་ multiply = (a, b) -> a * b;\nབཀོད་ multiply(༦, ༧);");
     }
