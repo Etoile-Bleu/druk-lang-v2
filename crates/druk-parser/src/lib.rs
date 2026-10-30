@@ -1,6 +1,6 @@
 //! Hand-written recursive-descent parser with Pratt-style precedence climbing
 //! for expressions. Parse errors are collected as diagnostics rather than
-//! aborting the pass — a single `parse` call reports every statement it
+//! aborting the pass: a single `parse` call reports every statement it
 //! could not make sense of, recovering at the next statement boundary.
 
 mod expressions;
