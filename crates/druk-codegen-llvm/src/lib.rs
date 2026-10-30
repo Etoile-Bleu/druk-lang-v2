@@ -14,6 +14,7 @@ mod codegen;
 mod runtime_fns;
 
 use inkwell::context::Context;
+use inkwell::AddressSpace;
 use inkwell::OptimizationLevel;
 
 use druk_diagnostics::Diagnostic;
@@ -34,9 +35,13 @@ pub fn run(module: &IrModule) -> Result<(), Diagnostic> {
 
     let runtime = RuntimeFns::declare(&context, &llvm_module);
 
+    let ptr_t = context.ptr_type(AddressSpace::default());
     let mut functions = Vec::with_capacity(module.functions.len());
     for function in &module.functions {
-        let param_types = vec![value_ty.into(); function.arity];
+        let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![ptr_t.into()];
+        for _ in 0..function.arity {
+            param_types.push(value_ty.into());
+        }
         let fn_type = value_ty.fn_type(&param_types, false);
         functions.push(llvm_module.add_function(&function.name, fn_type, None));
     }
@@ -58,11 +63,19 @@ pub fn run(module: &IrModule) -> Result<(), Diagnostic> {
             codegen.functions[index],
             function.arity,
             function.locals,
+            &function.capture_slots,
             &function.body,
             false,
         )?;
     }
-    codegen.compile_function(main_value, 0, module.main.locals, &module.main.body, true)?;
+    codegen.compile_function(
+        main_value,
+        0,
+        module.main.locals,
+        &[],
+        &module.main.body,
+        true,
+    )?;
 
     let engine = llvm_module
         .create_jit_execution_engine(OptimizationLevel::None)
@@ -145,6 +158,23 @@ mod tests {
     #[test]
     fn runs_lambdas() {
         compile_and_run("གྲངས་ multiply = (a, b) -> a * b;\nབཀོད་ multiply(༦, ༧);");
+    }
+
+    #[test]
+    fn runs_closures_that_capture_a_variable() {
+        compile_and_run("གྲངས་ n = ༥;\nགྲངས་ add_n = m -> m + n;\nབཀོད་ add_n(༣);");
+    }
+
+    #[test]
+    fn runs_a_closure_created_and_called_without_being_stored_in_a_local() {
+        compile_and_run("གྲངས་ n = ༧;\nབཀོད་ (m -> m + n)(༡);");
+    }
+
+    #[test]
+    fn runs_a_closure_created_inside_a_function_and_called_after_it_returns() {
+        compile_and_run(
+            "ལས་འགན་ make_adder(གྲངས་ base) {\n    སླར་ལོག་ m -> m + base;\n}\nགྲངས་ add_five = make_adder(༥);\nབཀོད་ add_five(༡༠༠);",
+        );
     }
 
     #[test]
