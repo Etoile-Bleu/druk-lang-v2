@@ -4,11 +4,11 @@
 //! represented uniformly so a backend does not need type-directed codegen
 //! for the handful of Druk types.
 //!
-//! Scope for this first lowering: the ten bundled example programs. Structs,
-//! builtins (`len`, `push`, ...), and lambdas that capture a variable from
-//! their enclosing scope are not supported yet and are reported as
-//! diagnostics rather than silently miscompiled, since none of the bundled
-//! examples need them.
+//! Scope for this first lowering: the ten bundled example programs plus
+//! structs. Builtins (`len`, `push`, ...) and lambdas that capture a
+//! variable from their enclosing scope are not supported yet and are
+//! reported as diagnostics rather than silently miscompiled, since none of
+//! the bundled examples need them.
 
 use std::collections::HashMap;
 
@@ -67,6 +67,9 @@ pub enum IrExpr {
     ArrayLiteral(Vec<IrExpr>),
     ArrayGet(Box<IrExpr>, Box<IrExpr>),
     ArraySet(Box<IrExpr>, Box<IrExpr>, Box<IrExpr>),
+    StructLiteral(Vec<(String, IrExpr)>),
+    FieldGet(Box<IrExpr>, String),
+    FieldSet(Box<IrExpr>, String, Box<IrExpr>),
 }
 
 pub fn lower(hir: &Hir) -> Result<Module, Vec<Diagnostic>> {
@@ -326,11 +329,9 @@ impl<'a> Lowerer<'a> {
                 let index_ir = self.lower_expr(*index);
                 IrExpr::ArrayGet(Box::new(object_ir), Box::new(index_ir))
             }
-            Expr::FieldAccess { .. } => {
-                self.diagnostics.push(Diagnostic::error(
-                    "struct field access is not yet supported by the compiler",
-                ));
-                IrExpr::ConstNil
+            Expr::FieldAccess { object, field } => {
+                let object_ir = self.lower_expr(*object);
+                IrExpr::FieldGet(Box::new(object_ir), field.clone())
             }
             Expr::ArrayLiteral(elements) => {
                 let elements_ir = elements
@@ -339,11 +340,12 @@ impl<'a> Lowerer<'a> {
                     .collect();
                 IrExpr::ArrayLiteral(elements_ir)
             }
-            Expr::StructLiteral(_) => {
-                self.diagnostics.push(Diagnostic::error(
-                    "struct literals are not yet supported by the compiler",
-                ));
-                IrExpr::ConstNil
+            Expr::StructLiteral(fields) => {
+                let fields_ir = fields
+                    .iter()
+                    .map(|(name, value)| (name.clone(), self.lower_expr(*value)))
+                    .collect();
+                IrExpr::StructLiteral(fields_ir)
             }
             Expr::Lambda { params, body } => {
                 let params = params.clone();
@@ -369,6 +371,10 @@ impl<'a> Lowerer<'a> {
                 let object_ir = self.lower_expr(*object);
                 let index_ir = self.lower_expr(*index);
                 IrExpr::ArraySet(Box::new(object_ir), Box::new(index_ir), Box::new(value_ir))
+            }
+            Expr::FieldAccess { object, field } => {
+                let object_ir = self.lower_expr(*object);
+                IrExpr::FieldSet(Box::new(object_ir), field.clone(), Box::new(value_ir))
             }
             _ => {
                 self.diagnostics
@@ -452,6 +458,35 @@ mod tests {
         assert_eq!(module.functions[0].name, "fib");
         assert_eq!(module.functions[0].arity, 1);
         assert_eq!(module.main.body.len(), 1);
+    }
+
+    #[test]
+    fn lowers_struct_literal_field_access_and_field_assignment() {
+        let module = lower_source("གྲངས་ p = {x: ༡, y: ༢}; བཀོད་ p.x; p.y = ༩; བཀོད་ p.y;")
+            .expect("should lower");
+        assert_eq!(module.main.body.len(), 4);
+
+        match &module.main.body[0] {
+            IrStmt::Expr(IrExpr::SetLocal(_, value)) => match value.as_ref() {
+                IrExpr::StructLiteral(fields) => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].0, "x");
+                    assert_eq!(fields[1].0, "y");
+                }
+                other => panic!("expected StructLiteral, got {other:?}"),
+            },
+            other => panic!("expected a SetLocal statement, got {other:?}"),
+        }
+
+        match &module.main.body[1] {
+            IrStmt::Print(IrExpr::FieldGet(_, field)) => assert_eq!(field, "x"),
+            other => panic!("expected Print(FieldGet), got {other:?}"),
+        }
+
+        match &module.main.body[2] {
+            IrStmt::Expr(IrExpr::FieldSet(_, field, _)) => assert_eq!(field, "y"),
+            other => panic!("expected Expr(FieldSet), got {other:?}"),
+        }
     }
 
     #[test]
