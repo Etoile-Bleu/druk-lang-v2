@@ -144,8 +144,8 @@ impl<'ctx> CodeGen<'ctx> {
     /// earlier sibling's fresh heap value before it's stored anywhere: a
     /// named local stays rooted for as long as its function's frame is
     /// registered (see `push_frame`), but a value that has only just been
-    /// computed — the first two elements of an array literal, while a third
-    /// element's construction calls `druk_rt_make_string` — isn't reachable
+    /// computed (the first two elements of an array literal, while a third
+    /// element's construction calls `druk_rt_make_string`) isn't reachable
     /// from any frame until something stores it into one. This closes that
     /// gap for every place `compile_expr` is called more than once before
     /// all the results are consumed: array literals, call arguments, binary
@@ -187,7 +187,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     /// Registers the current function's locals array as a GC root set for
-    /// the duration of this call — see `druk_rt_push_frame`'s doc comment in
+    /// the duration of this call. See `druk_rt_push_frame`'s doc comment in
     /// `druk-runtime` for why this, rather than scanning the native stack,
     /// is how Druk's collector finds live locals across (including
     /// recursive) calls.
@@ -216,7 +216,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     /// Writes `value` into a fresh stack slot and returns a pointer to it,
-    /// for passing a runtime function an `RtValue` argument — see the
+    /// for passing a runtime function an `RtValue` argument. See the
     /// `druk_runtime` module doc comment for why every `RtValue` crosses
     /// this FFI boundary through a pointer rather than by value.
     fn value_ptr(&self, value: StructValue<'ctx>) -> PointerValue<'ctx> {
@@ -257,7 +257,7 @@ impl<'ctx> CodeGen<'ctx> {
     /// argument, then load the result back out. `args` are the rest of the
     /// callee's parameters, already assembled by the caller (themselves
     /// plain integers or pointers from `value_ptr`, never a struct passed
-    /// by value — see the `druk_runtime` module doc comment).
+    /// by value, see the `druk_runtime` module doc comment).
     fn call_with_out_param(
         &self,
         function: FunctionValue<'ctx>,
