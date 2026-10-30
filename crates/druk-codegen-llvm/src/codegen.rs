@@ -243,6 +243,25 @@ impl<'ctx> CodeGen<'ctx> {
         )
     }
 
+    /// Resolves the code pointer to jump to for a call target, whether it's
+    /// a plain function value (`TAG_FUNCTION`, payload is already the raw
+    /// pointer) or a closure (`TAG_CLOSURE`, payload is a heap handle):
+    /// `druk_rt_closure_function_ptr` is the single dispatch point so
+    /// codegen itself never branches on which tag `self_ptr` holds.
+    fn closure_function_ptr(&self, self_ptr: PointerValue<'ctx>) -> IntValue<'ctx> {
+        let call = unwrap_build(self.builder.build_call(
+            self.runtime.closure_function_ptr,
+            &[self_ptr.into()],
+            "call_closure_function_ptr",
+        ));
+        match call.try_as_basic_value() {
+            ValueKind::Basic(value) => value.into_int_value(),
+            ValueKind::Instruction(_) => {
+                ice!("druk_rt_closure_function_ptr unexpectedly returned void")
+            }
+        }
+    }
+
     fn bool_to_tagged(&self, bit: IntValue<'ctx>) -> StructValue<'ctx> {
         let extended = unwrap_build(self.builder.build_int_z_extend(
             bit,
@@ -276,6 +295,7 @@ impl<'ctx> CodeGen<'ctx> {
         function_value: FunctionValue<'ctx>,
         arity: usize,
         locals_count: u32,
+        capture_slots: &[u32],
         body: &[IrStmt],
         is_main: bool,
     ) -> Result<(), Diagnostic> {
@@ -287,13 +307,45 @@ impl<'ctx> CodeGen<'ctx> {
         self.locals_ptr = Some(locals_ptr);
         self.locals_ty = Some(locals_ty);
 
+        // Every non-main function carries a leading `self: ptr` parameter
+        // (the callee's own `RtValue`, see `compile_call`), unused by a
+        // non-capturing function but always present so codegen never
+        // branches on call shape. `main` keeps its fixed zero-arg native
+        // entry signature instead.
+        let param_offset = if is_main { 0 } else { 1 };
         for index in 0..arity {
             let param = function_value
-                .get_nth_param(index as u32)
+                .get_nth_param((index + param_offset) as u32)
                 .unwrap_or_else(|| ice!("function is missing declared parameter {index}"));
             let ptr = self.local_ptr(index as u32);
             unwrap_build(self.builder.build_store(ptr, param));
         }
+
+        // Captures are unpacked from the environment exactly once, here,
+        // before `push_frame` and before any user code runs, straight into
+        // this function's own (about-to-be-rooted) locals array. Nothing
+        // can allocate between function entry and this point, so `self`
+        // never needs to be an independent GC root.
+        if !is_main && !capture_slots.is_empty() {
+            let self_ptr = function_value
+                .get_nth_param(0)
+                .unwrap_or_else(|| ice!("closure-capturing function is missing its self parameter"))
+                .into_pointer_value();
+            for (closure_index, &local_slot) in capture_slots.iter().enumerate() {
+                let index_value = self
+                    .context
+                    .i64_type()
+                    .const_int(closure_index as u64, false);
+                let capture = self.call_with_out_param(
+                    self.runtime.closure_get_capture,
+                    &[self_ptr.into(), index_value.into()],
+                    "call_closure_get_capture",
+                );
+                let ptr = self.local_ptr(local_slot);
+                unwrap_build(self.builder.build_store(ptr, capture));
+            }
+        }
+
         self.push_frame(locals_count);
 
         for stmt in body {
@@ -490,6 +542,9 @@ impl<'ctx> CodeGen<'ctx> {
                     "call_struct_get",
                 )
             }
+            IrExpr::MakeClosure(fid, captures) => {
+                self.compile_make_closure(*fid, captures, function)?
+            }
             IrExpr::FieldSet(object, field, value) => {
                 let operands =
                     self.compile_rooted_siblings(&[object.as_ref(), value.as_ref()], function)?;
@@ -678,18 +733,35 @@ impl<'ctx> CodeGen<'ctx> {
         args: &[IrExpr],
         function: FunctionValue<'ctx>,
     ) -> Result<StructValue<'ctx>, Diagnostic> {
-        let callee_value = self.compile_expr(callee, function)?;
-        let arg_refs: Vec<&IrExpr> = args.iter().collect();
-        let arg_values = self.compile_rooted_siblings(&arg_refs, function)?;
+        // `callee` and `args` are evaluated and rooted together: a closure
+        // built fresh as the call target (never stored in a local) must
+        // stay reachable while its arguments are evaluated, exactly like
+        // any other set of sibling expressions.
+        let mut exprs: Vec<&IrExpr> = Vec::with_capacity(args.len() + 1);
+        exprs.push(callee);
+        exprs.extend(args.iter());
+        let values = self.compile_rooted_siblings(&exprs, function)?;
+        let callee_value = values[0];
+        let arg_values = &values[1..];
 
-        let payload = self.extract_payload(callee_value);
+        let self_ptr = self.value_ptr(callee_value);
+        let fn_ptr_int = self.closure_function_ptr(self_ptr);
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        let fn_ptr = unwrap_build(self.builder.build_int_to_ptr(payload, ptr_ty, "callee_ptr"));
-        let fn_type = self
-            .value_ty
-            .fn_type(&vec![self.value_ty.into(); args.len()], false);
-        let call_args: Vec<BasicMetadataValueEnum> =
-            arg_values.iter().map(|value| (*value).into()).collect();
+        let fn_ptr = unwrap_build(
+            self.builder
+                .build_int_to_ptr(fn_ptr_int, ptr_ty, "callee_ptr"),
+        );
+
+        let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![ptr_ty.into()];
+        for _ in 0..args.len() {
+            param_types.push(self.value_ty.into());
+        }
+        let fn_type = self.value_ty.fn_type(&param_types, false);
+
+        let mut call_args: Vec<BasicMetadataValueEnum> = vec![self_ptr.into()];
+        for value in arg_values {
+            call_args.push((*value).into());
+        }
 
         let call = unwrap_build(self.builder.build_indirect_call(
             fn_type,
@@ -698,6 +770,40 @@ impl<'ctx> CodeGen<'ctx> {
             "call_indirect",
         ));
         Ok(call_result(call))
+    }
+
+    fn compile_make_closure(
+        &mut self,
+        fid: FunctionId,
+        captures: &[IrExpr],
+        function: FunctionValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, Diagnostic> {
+        let capture_refs: Vec<&IrExpr> = captures.iter().collect();
+        let values = self.compile_rooted_siblings(&capture_refs, function)?;
+
+        let len = values.len() as u32;
+        let buffer_ty = self.value_ty.array_type(len);
+        let buffer = unwrap_build(self.builder.build_alloca(buffer_ty, "closure_captures"));
+        for (index, value) in values.into_iter().enumerate() {
+            let slot_ptr = self.array_slot_ptr(buffer_ty, buffer, index as u32);
+            unwrap_build(self.builder.build_store(slot_ptr, value));
+        }
+
+        let target_function = self.functions[fid.0 as usize];
+        let target_ptr = target_function.as_global_value().as_pointer_value();
+        let int_ty = self.context.i64_type();
+        let function_ptr_int = unwrap_build(self.builder.build_ptr_to_int(
+            target_ptr,
+            int_ty,
+            "closure_fn_ptr_as_int",
+        ));
+
+        let len_value = self.context.i64_type().const_int(len as u64, false);
+        Ok(self.call_with_out_param(
+            self.runtime.make_closure,
+            &[function_ptr_int.into(), buffer.into(), len_value.into()],
+            "call_make_closure",
+        ))
     }
 
     fn compile_array_literal(

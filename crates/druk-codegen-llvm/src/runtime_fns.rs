@@ -17,6 +17,9 @@ pub(crate) struct RuntimeFns<'ctx> {
     pub(crate) struct_set: FunctionValue<'ctx>,
     pub(crate) push_frame: FunctionValue<'ctx>,
     pub(crate) pop_frame: FunctionValue<'ctx>,
+    pub(crate) make_closure: FunctionValue<'ctx>,
+    pub(crate) closure_function_ptr: FunctionValue<'ctx>,
+    pub(crate) closure_get_capture: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeFns<'ctx> {
@@ -108,6 +111,24 @@ impl<'ctx> RuntimeFns<'ctx> {
             None,
         );
         let pop_frame = module.add_function("druk_rt_pop_frame", void_t.fn_type(&[], false), None);
+        let make_closure = module.add_function(
+            "druk_rt_make_closure",
+            void_t.fn_type(
+                &[ptr_t.into(), i64_t.into(), ptr_t.into(), i64_t.into()],
+                false,
+            ),
+            None,
+        );
+        let closure_function_ptr = module.add_function(
+            "druk_rt_closure_function_ptr",
+            i64_t.fn_type(&[ptr_t.into()], false),
+            None,
+        );
+        let closure_get_capture = module.add_function(
+            "druk_rt_closure_get_capture",
+            void_t.fn_type(&[ptr_t.into(), ptr_t.into(), i64_t.into()], false),
+            None,
+        );
 
         Self {
             print,
@@ -122,6 +143,9 @@ impl<'ctx> RuntimeFns<'ctx> {
             struct_set,
             push_frame,
             pop_frame,
+            make_closure,
+            closure_function_ptr,
+            closure_get_capture,
         }
     }
 
@@ -173,6 +197,18 @@ impl<'ctx> RuntimeFns<'ctx> {
         engine.add_global_mapping(
             &self.pop_frame,
             druk_runtime::druk_rt_pop_frame as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.make_closure,
+            druk_runtime::druk_rt_make_closure as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.closure_function_ptr,
+            druk_runtime::druk_rt_closure_function_ptr as *const () as usize,
+        );
+        engine.add_global_mapping(
+            &self.closure_get_capture,
+            druk_runtime::druk_rt_closure_get_capture as *const () as usize,
         );
     }
 }
