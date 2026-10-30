@@ -19,8 +19,9 @@ pub enum DriverError {
 /// checking) over `source`, returning the checked [`Hir`], or every
 /// diagnostic collected if any pass failed.
 ///
-/// Later pipeline stages (IR, codegen) are not wired in yet — see
-/// `druk-ir`/`druk-codegen-llvm`.
+/// This stops at the HIR stage by design, since `druk check` only needs to
+/// know whether the source is valid. See [`run_source`] for the full
+/// pipeline through `druk-ir`/`druk-codegen-llvm`.
 pub fn check_source(source: &str) -> Result<Hir, Vec<Diagnostic>> {
     let (ast, parse_diagnostics) = druk_parser::parse(source);
     if !parse_diagnostics.is_empty() {
