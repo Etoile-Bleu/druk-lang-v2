@@ -168,6 +168,22 @@ mod tests {
     }
 
     #[test]
+    fn a_while_loop_with_many_iterations_does_not_overflow_the_stack() {
+        // Every expression evaluated inside a loop body used to `alloca` at
+        // the builder's current position, i.e. inside the loop's own basic
+        // block: an `alloca` executed on every pass through a block grows
+        // the native stack by another slot each time, since nothing
+        // promotes or reclaims it without an optimization pass, which this
+        // backend never runs (`OptimizationLevel::None`). A loop with more
+        // than a few thousand iterations of ordinary arithmetic used to
+        // overflow the stack well before this count. See
+        // `CodeGen::build_entry_alloca`.
+        compile_and_run(
+            "གྲངས་ total = ༠;\nགྲངས་ i = ༠;\nཡང་བསྐྱར་ (i < ༡༠༠༠༠༠) {\n    total = total + i;\n    i = i + ༡;\n}\nབཀོད་ total;",
+        );
+    }
+
+    #[test]
     fn runs_len_push_pop_and_typeof_on_an_array() {
         compile_and_run(
             "གྲངས་[] xs = [༡, ༢, ༣];\nབཀོད་ རིང་ཚད(xs);\nསྣོན་(xs, ༤);\nབཀོད་ རིང་ཚད(xs);\nབཀོད་ བཏོན་(xs);\nབཀོད་ རིང་ཚད(xs);\nབཀོད་ རིགས་(xs);",
