@@ -10,7 +10,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Linux_%7C_Windows-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-**[Language reference](docs/dzongkha_reference.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)**
+**[Language reference](docs/dzongkha_reference.md) · [Font & keyboard setup](docs/dzongkha_input_setup.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)**
 
 <img src="docs/assets/terminal.svg" alt="A terminal running druk run on four bundled examples: hello world printing Hello, Druk Lang! and a Dzongkha greeting, recursion printing 13, arrays printing 1, 5, 99, and the combined demo printing 12 and Math works!" width="640">
 
@@ -57,7 +57,10 @@ workspace instead of a single sprawling source tree, compiling through LLVM.
 `སླར་ལོག་` is `return`, and `༡༠`/`༥`/`༧` are Tibetan digits. See
 [docs/dzongkha_reference.md](docs/dzongkha_reference.md) for the full keyword table and
 [examples/](examples/) for runnable programs covering arithmetic, control flow, loops, functions,
-recursion, lambdas, pattern matching, arrays, and structs.
+recursion, lambdas, pattern matching, arrays, and structs. If Dzongkha text doesn't render as
+clean stacked letters in your editor or terminal, see
+[docs/dzongkha_input_setup.md](docs/dzongkha_input_setup.md) for a font and keyboard/IME setup
+guide covering Windows, macOS, and Linux.
 
 ## Quick start
 
