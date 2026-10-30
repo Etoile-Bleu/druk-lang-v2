@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420" font-family="SFMono-Regular, Consolas, 'Liberation Mono', Menlo, Courier, monospace">
+  <rect width="760" height="420" rx="10" fill="#1e1e2e"/>
+  <rect width="760" height="34" rx="10" fill="#2a2a3c"/>
+  <rect y="24" width="760" height="10" fill="#2a2a3c"/>
+  <circle cx="22" cy="17" r="6" fill="#ff5f56"/>
+  <circle cx="44" cy="17" r="6" fill="#ffbd2e"/>
+  <circle cx="66" cy="17" r="6" fill="#27c93f"/>
+  <text x="380" y="21" fill="#9a9ab0" font-size="12" text-anchor="middle">druk run</text>
+
+  <text x="20" y="64" font-size="14" fill="#6c7086">$ </text>
+  <text x="34" y="64" font-size="14" fill="#a6e3a1">cargo run -p druk -- run examples/01_hello.druk</text>
+  <text x="20" y="90" font-size="14" fill="#cdd6f4">Hello, Druk Lang!</text>
+  <text x="20" y="114" font-size="14" fill="#f9e2af">བདེ་ལེགས། (Tashi Delek)</text>
+
+  <text x="20" y="152" font-size="14" fill="#6c7086">$ </text>
+  <text x="34" y="152" font-size="14" fill="#a6e3a1">cargo run -p druk -- run examples/06_recursion.druk</text>
+  <text x="20" y="178" font-size="14" fill="#cdd6f4">13</text>
+
+  <text x="20" y="216" font-size="14" fill="#6c7086">$ </text>
+  <text x="34" y="216" font-size="14" fill="#a6e3a1">cargo run -p druk -- run examples/09_arrays.druk</text>
+  <text x="20" y="242" font-size="14" fill="#cdd6f4">1</text>
+  <text x="20" y="262" font-size="14" fill="#cdd6f4">5</text>
+  <text x="20" y="282" font-size="14" fill="#cdd6f4">99</text>
+
+  <text x="20" y="320" font-size="14" fill="#6c7086">$ </text>
+  <text x="34" y="320" font-size="14" fill="#a6e3a1">cargo run -p druk -- run examples/10_demo.druk</text>
+  <text x="20" y="346" font-size="14" fill="#cdd6f4">12</text>
+  <text x="20" y="366" font-size="14" fill="#f9e2af">Math works!</text>
+
+  <text x="20" y="400" font-size="13" fill="#6c7086">$ </text>
+  <rect x="34" y="389" width="8" height="14" fill="#cdd6f4"/>
+</svg>
