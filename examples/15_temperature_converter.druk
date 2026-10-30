@@ -1,0 +1,7 @@
+ལས་འགན་ celsius_to_fahrenheit(གྲངས་ c) {
+    སླར་ལོག་ c * ༩ / ༥ + ༣༢;
+}
+
+བཀོད་ celsius_to_fahrenheit(༠);
+བཀོད་ celsius_to_fahrenheit(༡༠༠);
+བཀོད་ celsius_to_fahrenheit(༣༧);

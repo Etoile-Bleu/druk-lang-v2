@@ -40,20 +40,20 @@ pub fn check_file(path: &Path) -> Result<Hir, DriverError> {
 }
 
 /// Runs `source` through the full pipeline (frontend, HIR, IR, LLVM JIT)
-/// and executes it.
-pub fn run_source(source: &str) -> Result<(), Vec<Diagnostic>> {
+/// and executes it, with `args` as the program's own `argv`/`argc`.
+pub fn run_source(source: &str, args: &[String]) -> Result<(), Vec<Diagnostic>> {
     let hir = check_source(source)?;
     let ir = druk_ir::lower(&hir)?;
-    druk_codegen_llvm::run(&ir).map_err(|diagnostic| vec![diagnostic])
+    druk_codegen_llvm::run(&ir, args).map_err(|diagnostic| vec![diagnostic])
 }
 
 /// Reads `path` from disk and runs [`run_source`] over its contents.
-pub fn run_file(path: &Path) -> Result<(), DriverError> {
+pub fn run_file(path: &Path, args: &[String]) -> Result<(), DriverError> {
     let source = std::fs::read_to_string(path).map_err(|source| DriverError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    run_source(&source).map_err(DriverError::Diagnostics)
+    run_source(&source, args).map_err(DriverError::Diagnostics)
 }
 
 /// Renders every diagnostic in `diagnostics` against `source_name`/`source`,
@@ -86,7 +86,7 @@ mod tests {
         for entry in entries {
             let path = entry.expect("readable dir entry").path();
             if path.extension().map(|ext| ext == "druk").unwrap_or(false) {
-                let result = run_file(&path);
+                let result = run_file(&path, &[]);
                 assert!(result.is_ok(), "failed to run {path:?}: {result:?}");
             }
         }

@@ -5,17 +5,29 @@
 //! for the handful of Druk types.
 //!
 //! Scope for this first lowering: the ten bundled example programs plus
-//! structs and single-level lambda capture. Builtins (`len`, `push`, ...)
-//! are not supported yet and are reported as diagnostics rather than
-//! silently miscompiled, since none of the bundled examples need them. A
-//! lambda can capture a variable from its immediately enclosing scope
-//! (one level up); a lambda nested inside another lambda trying to reach
-//! two levels up is also reported as a diagnostic rather than silently
-//! miscompiled, since no bundled example needs that either.
+//! structs, single-level lambda capture, and the Dzongkha builtins (`len`,
+//! `push`, `pop`, `typeof`, `input`, `argv`, `argc`). `keys`/`values`/
+//! `contains` depend on a dictionary type that doesn't exist yet and are
+//! reported as diagnostics rather than silently miscompiled, since no
+//! bundled example needs them. A lambda can capture a variable from its
+//! immediately enclosing scope (one level up); a lambda nested inside
+//! another lambda trying to reach two levels up is also reported as a
+//! diagnostic rather than silently miscompiled, since no bundled example
+//! needs that either.
+//!
+//! Split by responsibility into sibling files: `statements` (control flow)
+//! and `expressions` (everything else, including builtin-call resolution).
+//! Scope and capture bookkeeping (`push_function_scope`, `resolve_local`,
+//! `resolve_or_add_capture`, ...) stays here in `lib.rs` alongside the
+//! [`Lowerer`] struct itself, the same way `druk-parser`'s token-stream
+//! helpers stay alongside its `Parser` struct.
+
+mod expressions;
+mod statements;
 
 use std::collections::HashMap;
 
-use druk_ast::{Ast, Expr, ExprId, Literal, MatchArm, Pattern, Stmt, StmtId};
+use druk_ast::{Ast, Literal, Stmt};
 use druk_diagnostics::{ice, Diagnostic};
 use druk_hir::Hir;
 
@@ -56,6 +68,24 @@ pub enum IrStmt {
     Block(Vec<IrStmt>),
 }
 
+/// A Dzongkha builtin function, lowered to its own IR node (rather than an
+/// ordinary [`IrExpr::Call`] through a [`FunctionId`]) since none of them are
+/// Druk-defined functions with a compiled body: codegen dispatches each one
+/// straight to a fixed `druk-runtime` entry point. `keys`/`values`/
+/// `contains` are deliberately absent: they depend on a dictionary type this
+/// compiler doesn't have yet, so a call to one of them still falls through
+/// to the "not supported by the compiler yet" diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinOp {
+    Len,
+    Push,
+    Pop,
+    TypeOf,
+    Input,
+    Argv,
+    Argc,
+}
+
 #[derive(Debug, Clone)]
 pub enum IrExpr {
     ConstInt(i64),
@@ -75,6 +105,7 @@ pub enum IrExpr {
     FieldGet(Box<IrExpr>, String),
     FieldSet(Box<IrExpr>, String, Box<IrExpr>),
     MakeClosure(FunctionId, Vec<IrExpr>),
+    Builtin(BuiltinOp, Vec<IrExpr>),
 }
 
 pub fn lower(hir: &Hir) -> Result<Module, Vec<Diagnostic>> {
@@ -153,7 +184,13 @@ struct Lowerer<'a> {
     diagnostics: Vec<Diagnostic>,
     scope_stack: Vec<Vec<HashMap<String, u32>>>,
     next_slot_stack: Vec<u32>,
+    /// Per enclosing-function-scope: `(name, enclosing_slot, local_slot)`
+    /// for every variable a lambda directly inside it has captured so far.
     captures_stack: Vec<Vec<(String, u32, u32)>>,
+    /// Parallel to `scope_stack`/`next_slot_stack`: whether the function
+    /// scope at that depth is a lambda (capture-eligible) or a named
+    /// top-level function (never capture-eligible, even though it may sit
+    /// at the same nesting depth as a lambda would).
     is_lambda_stack: Vec<bool>,
 }
 
@@ -171,36 +208,6 @@ impl<'a> Lowerer<'a> {
         let locals = self.next_slot_stack.pop().unwrap_or(0);
         let captures = self.captures_stack.pop().unwrap_or_default();
         (locals, captures)
-    }
-
-    fn resolve_or_add_capture(&mut self, name: &str) -> Option<u32> {
-        if !*self.is_lambda_stack.last()? {
-            return None;
-        }
-        if let Some((_, _, slot)) = self
-            .captures_stack
-            .last()?
-            .iter()
-            .find(|(capture_name, _, _)| capture_name == name)
-        {
-            return Some(*slot);
-        }
-
-        let enclosing_index = self.scope_stack.len().checked_sub(2)?;
-        let enclosing_slot = {
-            let scopes = &self.scope_stack[enclosing_index];
-            scopes
-                .iter()
-                .rev()
-                .find_map(|scope| scope.get(name).copied())
-        }?;
-
-        let local_slot = self.declare_slot(name);
-        match self.captures_stack.last_mut() {
-            Some(captures) => captures.push((name.to_string(), enclosing_slot, local_slot)),
-            None => ice!("captures_stack was just confirmed non-empty above"),
-        }
-        Some(local_slot)
     }
 
     fn push_block_scope(&mut self) {
@@ -238,230 +245,56 @@ impl<'a> Lowerer<'a> {
         None
     }
 
-    fn lower_block(&mut self, stmts: &[StmtId]) -> Vec<IrStmt> {
-        stmts.iter().map(|&id| self.lower_stmt(id)).collect()
-    }
-
-    fn lower_stmt(&mut self, id: StmtId) -> IrStmt {
-        let ast = self.ast;
-        match ast.stmt(id) {
-            Stmt::Let { name, value, .. } => {
-                let value_ir = match value {
-                    Some(value_id) => self.lower_expr(*value_id),
-                    None => IrExpr::ConstNil,
-                };
-                let slot = self.declare_slot(name);
-                IrStmt::Expr(IrExpr::SetLocal(slot, Box::new(value_ir)))
-            }
-            Stmt::Expr(expr) => IrStmt::Expr(self.lower_expr(*expr)),
-            Stmt::Print(expr) => IrStmt::Print(self.lower_expr(*expr)),
-            Stmt::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let cond = self.lower_expr(*condition);
-                self.push_block_scope();
-                let then_ir = self.lower_block(then_branch);
-                self.pop_block_scope();
-                let else_ir = match else_branch {
-                    Some(branch) => {
-                        self.push_block_scope();
-                        let lowered = self.lower_block(branch);
-                        self.pop_block_scope();
-                        lowered
-                    }
-                    None => Vec::new(),
-                };
-                IrStmt::If {
-                    cond,
-                    then_branch: then_ir,
-                    else_branch: else_ir,
-                }
-            }
-            Stmt::While { condition, body } => {
-                let cond = self.lower_expr(*condition);
-                self.push_block_scope();
-                let body_ir = self.lower_block(body);
-                self.pop_block_scope();
-                IrStmt::While {
-                    cond,
-                    body: body_ir,
-                }
-            }
-            Stmt::Return(value) => IrStmt::Return(value.map(|value_id| self.lower_expr(value_id))),
-            Stmt::FunctionDecl { .. } => {
-                self.diagnostics.push(Diagnostic::error(
-                    "nested function declarations are not yet supported",
-                ));
-                IrStmt::Expr(IrExpr::ConstNil)
-            }
-            Stmt::Match { subject, arms } => {
-                let subject_id = *subject;
-                let arms = arms.clone();
-                self.lower_match(subject_id, &arms)
-            }
+    /// Resolves `name` against the current lambda's immediately enclosing
+    /// scope (one level up), declaring it as a new capture the first time
+    /// it's seen and reusing the same local slot on every later reference
+    /// within the same lambda. Returns `None` (without declaring anything)
+    /// when the current scope isn't a lambda, or `name` isn't found one
+    /// level up either.
+    fn resolve_or_add_capture(&mut self, name: &str) -> Option<u32> {
+        if !*self.is_lambda_stack.last()? {
+            return None;
         }
-    }
-
-    fn lower_match(&mut self, subject: ExprId, arms: &[MatchArm]) -> IrStmt {
-        let subject_ir = self.lower_expr(subject);
-        let slot = self.declare_slot("$match");
-        let set_stmt = IrStmt::Expr(IrExpr::SetLocal(slot, Box::new(subject_ir)));
-
-        let mut chain: Vec<IrStmt> = Vec::new();
-        for arm in arms.iter().rev() {
-            match &arm.pattern {
-                Pattern::Wildcard => {
-                    chain = vec![self.lower_stmt(arm.body)];
-                }
-                Pattern::Literal(literal) => {
-                    let literal_ir = lower_literal(literal);
-                    let cond = IrExpr::Binary(
-                        BinOp::Eq,
-                        Box::new(IrExpr::GetLocal(slot)),
-                        Box::new(literal_ir),
-                    );
-                    let then_branch = vec![self.lower_stmt(arm.body)];
-                    chain = vec![IrStmt::If {
-                        cond,
-                        then_branch,
-                        else_branch: chain,
-                    }];
-                }
-            }
+        if let Some((_, _, slot)) = self
+            .captures_stack
+            .last()?
+            .iter()
+            .find(|(capture_name, _, _)| capture_name == name)
+        {
+            return Some(*slot);
         }
 
-        IrStmt::Block(vec![set_stmt, IrStmt::Block(chain)])
+        let enclosing_index = self.scope_stack.len().checked_sub(2)?;
+        let enclosing_slot = {
+            let scopes = &self.scope_stack[enclosing_index];
+            scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(name).copied())
+        }?;
+
+        let local_slot = self.declare_slot(name);
+        match self.captures_stack.last_mut() {
+            Some(captures) => captures.push((name.to_string(), enclosing_slot, local_slot)),
+            None => ice!("captures_stack was just confirmed non-empty above"),
+        }
+        Some(local_slot)
     }
 
-    fn lower_expr(&mut self, id: ExprId) -> IrExpr {
-        let ast = self.ast;
-        match ast.expr(id) {
-            Expr::Literal(literal) => lower_literal(literal),
-            Expr::Ident(name) => {
-                if let Some(slot) = self.resolve_local(name) {
-                    IrExpr::GetLocal(slot)
-                } else if let Some(slot) = self.resolve_or_add_capture(name) {
-                    IrExpr::GetLocal(slot)
-                } else if let Some(&fid) = self.function_ids.get(name) {
-                    IrExpr::FunctionRef(fid)
-                } else {
-                    self.diagnostics.push(Diagnostic::error(format!(
-                        "'{name}' is not supported by the compiler yet"
-                    )));
-                    IrExpr::ConstNil
-                }
-            }
-            Expr::Unary { op, operand } => {
-                let operand_ir = self.lower_expr(*operand);
-                IrExpr::Unary(*op, Box::new(operand_ir))
-            }
-            Expr::Binary { op, lhs, rhs } => {
-                let lhs_ir = self.lower_expr(*lhs);
-                let rhs_ir = self.lower_expr(*rhs);
-                IrExpr::Binary(*op, Box::new(lhs_ir), Box::new(rhs_ir))
-            }
-            Expr::Assign { target, value } => {
-                let value_ir = self.lower_expr(*value);
-                let target_id = *target;
-                self.lower_assign(target_id, value_ir)
-            }
-            Expr::Call { callee, args } => {
-                let callee_ir = self.lower_expr(*callee);
-                let args_ir = args.iter().map(|&arg| self.lower_expr(arg)).collect();
-                IrExpr::Call(Box::new(callee_ir), args_ir)
-            }
-            Expr::Index { object, index } => {
-                let object_ir = self.lower_expr(*object);
-                let index_ir = self.lower_expr(*index);
-                IrExpr::ArrayGet(Box::new(object_ir), Box::new(index_ir))
-            }
-            Expr::FieldAccess { object, field } => {
-                let object_ir = self.lower_expr(*object);
-                IrExpr::FieldGet(Box::new(object_ir), field.clone())
-            }
-            Expr::ArrayLiteral(elements) => {
-                let elements_ir = elements
-                    .iter()
-                    .map(|&element| self.lower_expr(element))
-                    .collect();
-                IrExpr::ArrayLiteral(elements_ir)
-            }
-            Expr::StructLiteral(fields) => {
-                let fields_ir = fields
-                    .iter()
-                    .map(|(name, value)| (name.clone(), self.lower_expr(*value)))
-                    .collect();
-                IrExpr::StructLiteral(fields_ir)
-            }
-            Expr::Lambda { params, body } => {
-                let params = params.clone();
-                let body_id = *body;
-                self.lower_lambda(&params, body_id)
-            }
-        }
-    }
-
-    fn lower_assign(&mut self, target: ExprId, value_ir: IrExpr) -> IrExpr {
-        let ast = self.ast;
-        match ast.expr(target) {
-            Expr::Ident(name) => {
-                if let Some(slot) = self.resolve_local(name) {
-                    IrExpr::SetLocal(slot, Box::new(value_ir))
-                } else {
-                    self.diagnostics
-                        .push(Diagnostic::error(format!("cannot assign to '{name}'")));
-                    IrExpr::ConstNil
-                }
-            }
-            Expr::Index { object, index } => {
-                let object_ir = self.lower_expr(*object);
-                let index_ir = self.lower_expr(*index);
-                IrExpr::ArraySet(Box::new(object_ir), Box::new(index_ir), Box::new(value_ir))
-            }
-            Expr::FieldAccess { object, field } => {
-                let object_ir = self.lower_expr(*object);
-                IrExpr::FieldSet(Box::new(object_ir), field.clone(), Box::new(value_ir))
-            }
-            _ => {
-                self.diagnostics
-                    .push(Diagnostic::error("invalid assignment target"));
-                IrExpr::ConstNil
-            }
-        }
-    }
-
-    fn lower_lambda(&mut self, params: &[String], body: ExprId) -> IrExpr {
-        let fid = FunctionId(self.functions.len() as u32);
-        self.functions.push(Function {
-            name: format!("lambda${}", fid.0),
-            arity: params.len(),
-            locals: 0,
-            body: Vec::new(),
-            capture_slots: Vec::new(),
-        });
-
-        self.push_function_scope(true);
-        for param in params {
-            self.declare_slot(param);
-        }
-        let body_ir = self.lower_expr(body);
-        let (locals, captures) = self.pop_function_scope();
-
-        let function = &mut self.functions[fid.0 as usize];
-        function.locals = locals;
-        function.body = vec![IrStmt::Return(Some(body_ir))];
-        function.capture_slots = captures.iter().map(|(_, _, slot)| *slot).collect();
-
-        if captures.is_empty() {
-            IrExpr::FunctionRef(fid)
+    /// Resolves `name` against a local, a captured enclosing variable, or a
+    /// top-level function, in that order, without touching `diagnostics` or
+    /// falling back to a builtin. `None` means `name` is none of those,
+    /// which the caller (an `Expr::Ident` or an `Expr::Call`'s callee) is
+    /// responsible for either resolving as a builtin or reporting.
+    fn try_resolve_name(&mut self, name: &str) -> Option<IrExpr> {
+        if let Some(slot) = self.resolve_local(name) {
+            Some(IrExpr::GetLocal(slot))
+        } else if let Some(slot) = self.resolve_or_add_capture(name) {
+            Some(IrExpr::GetLocal(slot))
+        } else if let Some(&fid) = self.function_ids.get(name) {
+            Some(IrExpr::FunctionRef(fid))
         } else {
-            let capture_values = captures
-                .into_iter()
-                .map(|(_, enclosing_slot, _)| IrExpr::GetLocal(enclosing_slot))
-                .collect();
-            IrExpr::MakeClosure(fid, capture_values)
+            None
         }
     }
 }
@@ -578,6 +411,57 @@ mod tests {
                 other => panic!("expected MakeClosure, got {other:?}"),
             },
             other => panic!("expected a SetLocal statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_len_push_pop_typeof_and_input_calls_to_builtin_nodes() {
+        let module = lower_source(
+            "གྲངས་[] xs = [༡, ༢]; བཀོད་ རིང་ཚད(xs); སྣོན་(xs, ༣); བཏོན་(xs); བཀོད་ རིགས་(xs); བཀོད་ ནང་འཇུག་();",
+        )
+        .expect("should lower");
+
+        match &module.main.body[1] {
+            IrStmt::Print(IrExpr::Builtin(BuiltinOp::Len, args)) => assert_eq!(args.len(), 1),
+            other => panic!("expected Print(Builtin(Len)), got {other:?}"),
+        }
+        match &module.main.body[2] {
+            IrStmt::Expr(IrExpr::Builtin(BuiltinOp::Push, args)) => assert_eq!(args.len(), 2),
+            other => panic!("expected Expr(Builtin(Push)), got {other:?}"),
+        }
+        match &module.main.body[3] {
+            IrStmt::Expr(IrExpr::Builtin(BuiltinOp::Pop, args)) => assert_eq!(args.len(), 1),
+            other => panic!("expected Expr(Builtin(Pop)), got {other:?}"),
+        }
+        match &module.main.body[4] {
+            IrStmt::Print(IrExpr::Builtin(BuiltinOp::TypeOf, args)) => assert_eq!(args.len(), 1),
+            other => panic!("expected Print(Builtin(TypeOf)), got {other:?}"),
+        }
+        match &module.main.body[5] {
+            IrStmt::Print(IrExpr::Builtin(BuiltinOp::Input, args)) => assert!(args.is_empty()),
+            other => panic!("expected Print(Builtin(Input)), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_argv_and_argc_globals_to_builtin_nodes() {
+        let module = lower_source("བཀོད་ ནང་འཇུག་ཐོ་; བཀོད་ ནང་འཇུག་གྲངས་;").expect("should lower");
+        assert!(matches!(
+            &module.main.body[0],
+            IrStmt::Print(IrExpr::Builtin(BuiltinOp::Argv, _))
+        ));
+        assert!(matches!(
+            &module.main.body[1],
+            IrStmt::Print(IrExpr::Builtin(BuiltinOp::Argc, _))
+        ));
+    }
+
+    #[test]
+    fn a_local_named_like_a_builtin_shadows_it() {
+        let module = lower_source("གྲངས་ len = ༥; བཀོད་ len;").expect("should lower");
+        match &module.main.body[1] {
+            IrStmt::Print(IrExpr::GetLocal(_)) => {}
+            other => panic!("expected Print(GetLocal), got {other:?}"),
         }
     }
 }

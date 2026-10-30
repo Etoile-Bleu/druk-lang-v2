@@ -1,0 +1,19 @@
+ལས་འགན་ deposit(account, གྲངས་ amount) {
+    account.balance = account.balance + amount;
+    སླར་ལོག་ account.balance;
+}
+
+ལས་འགན་ withdraw(account, གྲངས་ amount) {
+    གལ་སྲིད་ (amount > account.balance) {
+        བཀོད་ "Insufficient funds";
+        སླར་ལོག་ account.balance;
+    }
+    account.balance = account.balance - amount;
+    སླར་ལོག་ account.balance;
+}
+
+གྲངས་ account = {balance: ༡༠༠};
+བཀོད་ deposit(account, ༥༠);
+བཀོད་ withdraw(account, ༣༠);
+བཀོད་ withdraw(account, ༥༠༠);
+བཀོད་ account.balance;

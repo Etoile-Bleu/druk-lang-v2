@@ -1,0 +1,10 @@
+བཀོད་ "Do you like Druk? (yes/no)";
+ཡིག་འབྲུ་ answer = ནང་འཇུག་();
+
+གལ་སྲིད་ (answer == "yes") {
+    བཀོད་ "Great!";
+} མེད་ན་ {
+    བཀོད་ "Maybe next time.";
+}
+
+བཀོད་ རིགས་(answer);

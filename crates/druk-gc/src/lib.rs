@@ -24,6 +24,11 @@
 //! one `clox` and Lua use) so a caller knows *when* to collect; it is not
 //! called automatically by `alloc_string`/`alloc_array`.
 
+mod arrays;
+mod closures;
+mod strings;
+mod structs;
+
 use druk_diagnostics::ice;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -157,25 +162,6 @@ impl Heap {
         Handle(index)
     }
 
-    pub fn alloc_string(&mut self, value: String) -> Handle {
-        self.alloc(Object::Str(value))
-    }
-
-    pub fn alloc_array(&mut self, elements: Vec<Value>) -> Handle {
-        self.alloc(Object::Array(elements))
-    }
-
-    pub fn alloc_struct(&mut self, fields: Vec<(String, Value)>) -> Handle {
-        self.alloc(Object::Struct(fields))
-    }
-
-    pub fn alloc_closure(&mut self, function_ptr: usize, captures: Vec<Value>) -> Handle {
-        self.alloc(Object::Closure {
-            function_ptr,
-            captures,
-        })
-    }
-
     fn object(&self, handle: Handle) -> &Object {
         match &self.slots[handle.index()] {
             Slot::Live { object, .. } => object,
@@ -187,106 +173,6 @@ impl Heap {
         match &mut self.slots[handle.index()] {
             Slot::Live { object, .. } => object,
             Slot::Free { .. } => ice!("handle refers to a freed heap slot"),
-        }
-    }
-
-    pub fn get_string(&self, handle: Handle) -> &str {
-        match self.object(handle) {
-            Object::Str(value) => value,
-            Object::Array(_) => ice!("get_string called on a handle that holds an array"),
-            Object::Struct(_) => ice!("get_string called on a handle that holds a struct"),
-            Object::Closure { .. } => ice!("get_string called on a handle that holds a closure"),
-        }
-    }
-
-    pub fn get_array(&self, handle: Handle) -> &[Value] {
-        match self.object(handle) {
-            Object::Array(elements) => elements,
-            Object::Str(_) => ice!("get_array called on a handle that holds a string"),
-            Object::Struct(_) => ice!("get_array called on a handle that holds a struct"),
-            Object::Closure { .. } => ice!("get_array called on a handle that holds a closure"),
-        }
-    }
-
-    pub fn array_len(&self, handle: Handle) -> usize {
-        self.get_array(handle).len()
-    }
-
-    pub fn array_get(&self, handle: Handle, index: usize) -> Value {
-        self.get_array(handle)
-            .get(index)
-            .copied()
-            .unwrap_or(Value::Nil)
-    }
-
-    pub fn array_set(&mut self, handle: Handle, index: usize, value: Value) {
-        match self.object_mut(handle) {
-            Object::Array(elements) => {
-                if let Some(slot) = elements.get_mut(index) {
-                    *slot = value;
-                }
-            }
-            Object::Str(_) => ice!("array_set called on a handle that holds a string"),
-            Object::Struct(_) => ice!("array_set called on a handle that holds a struct"),
-            Object::Closure { .. } => ice!("array_set called on a handle that holds a closure"),
-        }
-    }
-
-    /// Returns the value of `field` on the struct at `handle`, or `Nil` if
-    /// the struct has no field by that name, the same not-found-is-nil
-    /// convention `array_get` uses for an out-of-bounds index.
-    pub fn struct_get(&self, handle: Handle, field: &str) -> Value {
-        match self.object(handle) {
-            Object::Struct(fields) => fields
-                .iter()
-                .find(|(name, _)| name == field)
-                .map(|(_, value)| *value)
-                .unwrap_or(Value::Nil),
-            Object::Str(_) => ice!("struct_get called on a handle that holds a string"),
-            Object::Array(_) => ice!("struct_get called on a handle that holds an array"),
-            Object::Closure { .. } => ice!("struct_get called on a handle that holds a closure"),
-        }
-    }
-
-    /// Overwrites `field` on the struct at `handle`. A struct's fields are
-    /// fixed at construction (its literal), so setting a field that doesn't
-    /// exist is a no-op, the same convention `array_set` uses for an
-    /// out-of-bounds index, rather than growing the struct dynamically.
-    pub fn struct_set(&mut self, handle: Handle, field: &str, value: Value) {
-        match self.object_mut(handle) {
-            Object::Struct(fields) => {
-                if let Some(slot) = fields.iter_mut().find(|(name, _)| name == field) {
-                    slot.1 = value;
-                }
-            }
-            Object::Str(_) => ice!("struct_set called on a handle that holds a string"),
-            Object::Array(_) => ice!("struct_set called on a handle that holds an array"),
-            Object::Closure { .. } => ice!("struct_set called on a handle that holds a closure"),
-        }
-    }
-
-    /// The raw function pointer of the closure at `handle`, to be cast back
-    /// to a callable at the codegen call site.
-    pub fn closure_function_ptr(&self, handle: Handle) -> usize {
-        match self.object(handle) {
-            Object::Closure { function_ptr, .. } => *function_ptr,
-            Object::Str(_) => ice!("closure_function_ptr called on a handle that holds a string"),
-            Object::Array(_) => ice!("closure_function_ptr called on a handle that holds an array"),
-            Object::Struct(_) => {
-                ice!("closure_function_ptr called on a handle that holds a struct")
-            }
-        }
-    }
-
-    /// Returns the value of capture `index` on the closure at `handle`, or
-    /// `Nil` if out of range, the same not-found-is-nil convention
-    /// `array_get` uses for an out-of-bounds index.
-    pub fn closure_get_capture(&self, handle: Handle, index: usize) -> Value {
-        match self.object(handle) {
-            Object::Closure { captures, .. } => captures.get(index).copied().unwrap_or(Value::Nil),
-            Object::Str(_) => ice!("closure_get_capture called on a handle that holds a string"),
-            Object::Array(_) => ice!("closure_get_capture called on a handle that holds an array"),
-            Object::Struct(_) => ice!("closure_get_capture called on a handle that holds a struct"),
         }
     }
 
@@ -368,6 +254,30 @@ mod tests {
         let handle = heap.alloc_array(vec![Value::Number(1), Value::Number(2)]);
         heap.array_set(handle, 1, Value::Number(99));
         assert_eq!(heap.array_get(handle, 1), Value::Number(99));
+    }
+
+    #[test]
+    fn array_push_appends_and_grows_the_length() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_array(vec![Value::Number(1)]);
+        heap.array_push(handle, Value::Number(2));
+        assert_eq!(heap.array_len(handle), 2);
+        assert_eq!(heap.array_get(handle, 1), Value::Number(2));
+    }
+
+    #[test]
+    fn array_pop_removes_and_returns_the_last_element() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_array(vec![Value::Number(1), Value::Number(2)]);
+        assert_eq!(heap.array_pop(handle), Value::Number(2));
+        assert_eq!(heap.array_len(handle), 1);
+    }
+
+    #[test]
+    fn array_pop_on_an_empty_array_returns_nil() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_array(Vec::new());
+        assert_eq!(heap.array_pop(handle), Value::Nil);
     }
 
     #[test]

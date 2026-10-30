@@ -1,0 +1,16 @@
+གྲངས་[] grades = [༧༥, ༨༠, ༦༥, ༩༠, ༥༥];
+གྲངས་ total = ༠;
+གྲངས་ i = ༠;
+ཡང་བསྐྱར་ (i < རིང་ཚད(grades)) {
+    total = total + grades[i];
+    i = i + ༡;
+}
+
+གྲངས་ average = total / རིང་ཚད(grades);
+བཀོད་ average;
+
+གལ་སྲིད་ (average >= ༦༠) {
+    བཀོད་ "Pass";
+} མེད་ན་ {
+    བཀོད་ "Fail";
+}
