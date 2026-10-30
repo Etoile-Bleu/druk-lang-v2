@@ -40,7 +40,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Tentatively parses `(ident, ident, ...)` without consuming input on
-    /// failure — used to disambiguate a lambda's parameter list from a
+    /// failure. Used to disambiguate a lambda's parameter list from a
     /// parenthesized grouping expression, which share the same opening token.
     fn try_parse_ident_param_list(&mut self) -> Option<Vec<String>> {
         let saved = self.pos;
