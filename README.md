@@ -29,7 +29,7 @@
 ## What it is
 
 Druk (འབྲུག་) is a compiled programming language using the Tibetan (Uchen) script for every
-keyword, identifier, and numeral — written in Dzongkha rather than English. The goal is to give
+keyword, identifier, and numeral, written in Dzongkha rather than English. The goal is to give
 Bhutanese students a language that reads in their own script as a stepping stone alongside the
 Scratch-then-Python path already used in the national ICT curriculum, not a replacement for it.
 
@@ -62,7 +62,7 @@ recursion, lambdas, pattern matching, and arrays.
 ```sh
 git clone https://github.com/Etoile-Bleu/druk-lang-v2.git
 cd druk-lang-v2
-# set up LLVM first — see Building below
+# set up LLVM first, see Building below
 cargo run -p druk -- run examples/01_hello.druk
 ```
 
@@ -76,7 +76,7 @@ crates/
   druk-parser/         token stream -> AST (hand-written recursive descent + Pratt parsing)
   druk-hir/            name resolution + type checking
   druk-ir/             backend-agnostic intermediate representation
-  druk-codegen-llvm/   LLVM backend (inkwell) — the only crate depending on LLVM
+  druk-codegen-llvm/   LLVM backend (inkwell), the only crate depending on LLVM
   druk-gc/             mark-and-sweep, handle-based heap
   druk-runtime/        array/string runtime support, the extern "C" ABI boundary
   druk-driver/         pipeline orchestration
@@ -94,10 +94,10 @@ programs compile and execute correctly via `druk run`.
 
 Known gaps, none of which the bundled examples need:
 
-- Structs (literal + field access) — documented in the language reference, not yet lowered
+- Structs (literal + field access), documented in the language reference but not yet lowered
 - The Dzongkha builtins (`len`, `push`, `pop`, `typeof`, `keys`, `values`, `contains`, `input`)
 - Lambdas that capture a variable from an enclosing scope
-- Native (ahead-of-time) compilation to a standalone executable — currently JIT-only via `druk run`
+- Native (ahead-of-time) compilation to a standalone executable; currently JIT-only via `druk run`
 - A language server, editor extension, or web playground
 
 ## Building
