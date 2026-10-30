@@ -5,15 +5,18 @@
 //! for the handful of Druk types.
 //!
 //! Scope for this first lowering: the ten bundled example programs plus
-//! structs. Builtins (`len`, `push`, ...) and lambdas that capture a
-//! variable from their enclosing scope are not supported yet and are
-//! reported as diagnostics rather than silently miscompiled, since none of
-//! the bundled examples need them.
+//! structs and single-level lambda capture. Builtins (`len`, `push`, ...)
+//! are not supported yet and are reported as diagnostics rather than
+//! silently miscompiled, since none of the bundled examples need them. A
+//! lambda can capture a variable from its immediately enclosing scope
+//! (one level up); a lambda nested inside another lambda trying to reach
+//! two levels up is also reported as a diagnostic rather than silently
+//! miscompiled, since no bundled example needs that either.
 
 use std::collections::HashMap;
 
 use druk_ast::{Ast, Expr, ExprId, Literal, MatchArm, Pattern, Stmt, StmtId};
-use druk_diagnostics::Diagnostic;
+use druk_diagnostics::{ice, Diagnostic};
 use druk_hir::Hir;
 
 pub use druk_ast::{BinOp, UnOp};
@@ -27,6 +30,7 @@ pub struct Function {
     pub arity: usize,
     pub locals: u32,
     pub body: Vec<IrStmt>,
+    pub capture_slots: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +74,7 @@ pub enum IrExpr {
     StructLiteral(Vec<(String, IrExpr)>),
     FieldGet(Box<IrExpr>, String),
     FieldSet(Box<IrExpr>, String, Box<IrExpr>),
+    MakeClosure(FunctionId, Vec<IrExpr>),
 }
 
 pub fn lower(hir: &Hir) -> Result<Module, Vec<Diagnostic>> {
@@ -86,6 +91,7 @@ pub fn lower(hir: &Hir) -> Result<Module, Vec<Diagnostic>> {
                 arity: params.len(),
                 locals: 0,
                 body: Vec::new(),
+                capture_slots: Vec::new(),
             });
         }
     }
@@ -97,20 +103,22 @@ pub fn lower(hir: &Hir) -> Result<Module, Vec<Diagnostic>> {
         diagnostics: Vec::new(),
         scope_stack: Vec::new(),
         next_slot_stack: Vec::new(),
+        captures_stack: Vec::new(),
+        is_lambda_stack: Vec::new(),
     };
 
     let mut main_body = Vec::new();
-    lowerer.push_function_scope();
+    lowerer.push_function_scope(false);
     for &id in &ast.top_level {
         match ast.stmt(id) {
             Stmt::FunctionDecl { name, params, body } => {
                 let fid = lowerer.function_ids[name];
-                lowerer.push_function_scope();
+                lowerer.push_function_scope(false);
                 for param in params {
                     lowerer.declare_slot(&param.name);
                 }
                 let lowered_body = lowerer.lower_block(body);
-                let locals = lowerer.pop_function_scope();
+                let (locals, _) = lowerer.pop_function_scope();
                 lowerer.functions[fid.0 as usize].locals = locals;
                 lowerer.functions[fid.0 as usize].body = lowered_body;
             }
@@ -120,7 +128,7 @@ pub fn lower(hir: &Hir) -> Result<Module, Vec<Diagnostic>> {
             }
         }
     }
-    let main_locals = lowerer.pop_function_scope();
+    let (main_locals, _) = lowerer.pop_function_scope();
 
     if lowerer.diagnostics.is_empty() {
         Ok(Module {
@@ -130,6 +138,7 @@ pub fn lower(hir: &Hir) -> Result<Module, Vec<Diagnostic>> {
                 arity: 0,
                 locals: main_locals,
                 body: main_body,
+                capture_slots: Vec::new(),
             },
         })
     } else {
@@ -144,17 +153,54 @@ struct Lowerer<'a> {
     diagnostics: Vec<Diagnostic>,
     scope_stack: Vec<Vec<HashMap<String, u32>>>,
     next_slot_stack: Vec<u32>,
+    captures_stack: Vec<Vec<(String, u32, u32)>>,
+    is_lambda_stack: Vec<bool>,
 }
 
 impl<'a> Lowerer<'a> {
-    fn push_function_scope(&mut self) {
+    fn push_function_scope(&mut self, is_lambda: bool) {
         self.scope_stack.push(vec![HashMap::new()]);
         self.next_slot_stack.push(0);
+        self.captures_stack.push(Vec::new());
+        self.is_lambda_stack.push(is_lambda);
     }
 
-    fn pop_function_scope(&mut self) -> u32 {
+    fn pop_function_scope(&mut self) -> (u32, Vec<(String, u32, u32)>) {
         self.scope_stack.pop();
-        self.next_slot_stack.pop().unwrap_or(0)
+        self.is_lambda_stack.pop();
+        let locals = self.next_slot_stack.pop().unwrap_or(0);
+        let captures = self.captures_stack.pop().unwrap_or_default();
+        (locals, captures)
+    }
+
+    fn resolve_or_add_capture(&mut self, name: &str) -> Option<u32> {
+        if !*self.is_lambda_stack.last()? {
+            return None;
+        }
+        if let Some((_, _, slot)) = self
+            .captures_stack
+            .last()?
+            .iter()
+            .find(|(capture_name, _, _)| capture_name == name)
+        {
+            return Some(*slot);
+        }
+
+        let enclosing_index = self.scope_stack.len().checked_sub(2)?;
+        let enclosing_slot = {
+            let scopes = &self.scope_stack[enclosing_index];
+            scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(name).copied())
+        }?;
+
+        let local_slot = self.declare_slot(name);
+        match self.captures_stack.last_mut() {
+            Some(captures) => captures.push((name.to_string(), enclosing_slot, local_slot)),
+            None => ice!("captures_stack was just confirmed non-empty above"),
+        }
+        Some(local_slot)
     }
 
     fn push_block_scope(&mut self) {
@@ -296,6 +342,8 @@ impl<'a> Lowerer<'a> {
             Expr::Ident(name) => {
                 if let Some(slot) = self.resolve_local(name) {
                     IrExpr::GetLocal(slot)
+                } else if let Some(slot) = self.resolve_or_add_capture(name) {
+                    IrExpr::GetLocal(slot)
                 } else if let Some(&fid) = self.function_ids.get(name) {
                     IrExpr::FunctionRef(fid)
                 } else {
@@ -391,20 +439,30 @@ impl<'a> Lowerer<'a> {
             arity: params.len(),
             locals: 0,
             body: Vec::new(),
+            capture_slots: Vec::new(),
         });
 
-        self.push_function_scope();
+        self.push_function_scope(true);
         for param in params {
             self.declare_slot(param);
         }
         let body_ir = self.lower_expr(body);
-        let locals = self.pop_function_scope();
+        let (locals, captures) = self.pop_function_scope();
 
         let function = &mut self.functions[fid.0 as usize];
         function.locals = locals;
         function.body = vec![IrStmt::Return(Some(body_ir))];
+        function.capture_slots = captures.iter().map(|(_, _, slot)| *slot).collect();
 
-        IrExpr::FunctionRef(fid)
+        if captures.is_empty() {
+            IrExpr::FunctionRef(fid)
+        } else {
+            let capture_values = captures
+                .into_iter()
+                .map(|(_, enclosing_slot, _)| IrExpr::GetLocal(enclosing_slot))
+                .collect();
+            IrExpr::MakeClosure(fid, capture_values)
+        }
     }
 }
 
@@ -495,5 +553,31 @@ mod tests {
             lower_source("གྲངས་ double = n -> n * ༢; བཀོད་ double(༣);").expect("should lower");
         assert_eq!(module.functions.len(), 1);
         assert_eq!(module.functions[0].arity, 1);
+        assert!(module.functions[0].capture_slots.is_empty());
+        match &module.main.body[0] {
+            IrStmt::Expr(IrExpr::SetLocal(_, value)) => {
+                assert!(matches!(value.as_ref(), IrExpr::FunctionRef(_)));
+            }
+            other => panic!("expected a SetLocal statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_a_lambda_capturing_an_enclosing_variable() {
+        let module = lower_source("གྲངས་ n = ༣; གྲངས་ add_n = m -> m + n; བཀོད་ add_n(༢);")
+            .expect("should lower");
+        assert_eq!(module.functions.len(), 1);
+        assert_eq!(module.functions[0].capture_slots.len(), 1);
+
+        match &module.main.body[1] {
+            IrStmt::Expr(IrExpr::SetLocal(_, value)) => match value.as_ref() {
+                IrExpr::MakeClosure(_, captures) => {
+                    assert_eq!(captures.len(), 1);
+                    assert!(matches!(captures[0], IrExpr::GetLocal(0)));
+                }
+                other => panic!("expected MakeClosure, got {other:?}"),
+            },
+            other => panic!("expected a SetLocal statement, got {other:?}"),
+        }
     }
 }
