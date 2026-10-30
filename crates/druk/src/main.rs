@@ -19,7 +19,13 @@ enum Command {
     /// Parse and type-check a .druk file without running it.
     Check { file: PathBuf },
     /// Compile and run a .druk file via the LLVM JIT.
-    Run { file: PathBuf },
+    Run {
+        file: PathBuf,
+        /// Extra arguments passed through to the Druk program's own
+        /// `argv`/`argc`.
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -36,9 +42,10 @@ fn main() -> ExitCode {
                 )
             }),
         ),
-        Command::Run { file } => {
-            report(&file, druk_driver::run_file(&file).map(|()| String::new()))
-        }
+        Command::Run { file, args } => report(
+            &file,
+            druk_driver::run_file(&file, &args).map(|()| String::new()),
+        ),
     }
 }
 
