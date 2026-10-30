@@ -1,5 +1,7 @@
 # Lire et écrire le dzongkha : police et clavier
 
+> *[English version](dzongkha_input_setup_en.md)*
+
 > Ce guide répond à une question très concrète : **comment taper et relire correctement les
 > fichiers `.druk`**, dont tous les mots-clés sont en dzongkha (écriture tibétaine Uchen,
 > bloc Unicode U+0F00–U+0FFF). Il s'adresse aux élèves et aux enseignants qui utilisent Druk en
