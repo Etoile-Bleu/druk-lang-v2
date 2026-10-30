@@ -5,7 +5,7 @@ use ariadne::{Color, Config, IndexType, Label as AriadneLabel, Report, ReportKin
 
 pub type Span = Range<usize>;
 
-/// The one sanctioned panic path in the compiler — see
+/// The one sanctioned panic path in the compiler. See
 /// `DrukCompiler/ErrorHandling.md`. Called only through the [`ice`] macro,
 /// never directly.
 #[allow(clippy::panic)]
@@ -122,7 +122,7 @@ impl fmt::Display for Diagnostic {
 impl std::error::Error for Diagnostic {}
 
 /// Renders a batch of diagnostics against the same source, in order, each
-/// separated by a blank line — the shape `druk-driver` hands to the user
+/// separated by a blank line, the shape `druk-driver` hands to the user
 /// after a pass that collects every error it found instead of stopping at
 /// the first one.
 pub fn render_all(source_name: &str, source: &str, diagnostics: &[Diagnostic]) -> String {
