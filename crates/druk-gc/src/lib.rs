@@ -52,6 +52,7 @@ pub enum Value {
     Str(Handle),
     Array(Handle),
     Struct(Handle),
+    Closure(Handle),
     /// A raw native function pointer, cast back to a callable at the call
     /// site. Functions are static code, not heap objects, so this never
     /// needs a `Handle` or GC tracing.
@@ -61,7 +62,10 @@ pub enum Value {
 impl Value {
     fn as_handle(&self) -> Option<Handle> {
         match self {
-            Value::Str(handle) | Value::Array(handle) | Value::Struct(handle) => Some(*handle),
+            Value::Str(handle)
+            | Value::Array(handle)
+            | Value::Struct(handle)
+            | Value::Closure(handle) => Some(*handle),
             Value::Nil | Value::Number(_) | Value::Bool(_) | Value::Function(_) => None,
         }
     }
@@ -72,6 +76,13 @@ enum Object {
     Str(String),
     Array(Vec<Value>),
     Struct(Vec<(String, Value)>),
+    /// A lambda that captured a variable from its enclosing scope: the raw
+    /// function pointer to call (static code, not itself traced, the same
+    /// way [`Value::Function`] isn't), plus the captured values (traced).
+    Closure {
+        function_ptr: usize,
+        captures: Vec<Value>,
+    },
 }
 
 #[derive(Debug)]
@@ -158,6 +169,13 @@ impl Heap {
         self.alloc(Object::Struct(fields))
     }
 
+    pub fn alloc_closure(&mut self, function_ptr: usize, captures: Vec<Value>) -> Handle {
+        self.alloc(Object::Closure {
+            function_ptr,
+            captures,
+        })
+    }
+
     fn object(&self, handle: Handle) -> &Object {
         match &self.slots[handle.index()] {
             Slot::Live { object, .. } => object,
@@ -177,6 +195,7 @@ impl Heap {
             Object::Str(value) => value,
             Object::Array(_) => ice!("get_string called on a handle that holds an array"),
             Object::Struct(_) => ice!("get_string called on a handle that holds a struct"),
+            Object::Closure { .. } => ice!("get_string called on a handle that holds a closure"),
         }
     }
 
@@ -185,6 +204,7 @@ impl Heap {
             Object::Array(elements) => elements,
             Object::Str(_) => ice!("get_array called on a handle that holds a string"),
             Object::Struct(_) => ice!("get_array called on a handle that holds a struct"),
+            Object::Closure { .. } => ice!("get_array called on a handle that holds a closure"),
         }
     }
 
@@ -208,6 +228,7 @@ impl Heap {
             }
             Object::Str(_) => ice!("array_set called on a handle that holds a string"),
             Object::Struct(_) => ice!("array_set called on a handle that holds a struct"),
+            Object::Closure { .. } => ice!("array_set called on a handle that holds a closure"),
         }
     }
 
@@ -223,6 +244,7 @@ impl Heap {
                 .unwrap_or(Value::Nil),
             Object::Str(_) => ice!("struct_get called on a handle that holds a string"),
             Object::Array(_) => ice!("struct_get called on a handle that holds an array"),
+            Object::Closure { .. } => ice!("struct_get called on a handle that holds a closure"),
         }
     }
 
@@ -239,6 +261,32 @@ impl Heap {
             }
             Object::Str(_) => ice!("struct_set called on a handle that holds a string"),
             Object::Array(_) => ice!("struct_set called on a handle that holds an array"),
+            Object::Closure { .. } => ice!("struct_set called on a handle that holds a closure"),
+        }
+    }
+
+    /// The raw function pointer of the closure at `handle`, to be cast back
+    /// to a callable at the codegen call site.
+    pub fn closure_function_ptr(&self, handle: Handle) -> usize {
+        match self.object(handle) {
+            Object::Closure { function_ptr, .. } => *function_ptr,
+            Object::Str(_) => ice!("closure_function_ptr called on a handle that holds a string"),
+            Object::Array(_) => ice!("closure_function_ptr called on a handle that holds an array"),
+            Object::Struct(_) => {
+                ice!("closure_function_ptr called on a handle that holds a struct")
+            }
+        }
+    }
+
+    /// Returns the value of capture `index` on the closure at `handle`, or
+    /// `Nil` if out of range, the same not-found-is-nil convention
+    /// `array_get` uses for an out-of-bounds index.
+    pub fn closure_get_capture(&self, handle: Handle, index: usize) -> Value {
+        match self.object(handle) {
+            Object::Closure { captures, .. } => captures.get(index).copied().unwrap_or(Value::Nil),
+            Object::Str(_) => ice!("closure_get_capture called on a handle that holds a string"),
+            Object::Array(_) => ice!("closure_get_capture called on a handle that holds an array"),
+            Object::Struct(_) => ice!("closure_get_capture called on a handle that holds a struct"),
         }
     }
 
@@ -269,6 +317,10 @@ impl Heap {
                     object: Object::Struct(fields),
                     ..
                 } => worklist.extend(fields.iter().filter_map(|(_, value)| value.as_handle())),
+                Slot::Live {
+                    object: Object::Closure { captures, .. },
+                    ..
+                } => worklist.extend(captures.iter().filter_map(Value::as_handle)),
                 _ => {}
             }
         }
@@ -423,6 +475,41 @@ mod tests {
         heap.collect(&[]);
 
         let reused = heap.alloc_struct(vec![("y".to_string(), Value::Number(2))]);
+        assert!(reused.index() < 1, "expected the freed slot to be reused");
+    }
+
+    #[test]
+    fn allocates_and_reads_a_closure_capture() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_closure(0x1234, vec![Value::Number(42)]);
+        assert_eq!(heap.closure_function_ptr(handle), 0x1234);
+        assert_eq!(heap.closure_get_capture(handle, 0), Value::Number(42));
+    }
+
+    #[test]
+    fn closure_get_capture_out_of_range_returns_nil() {
+        let mut heap = Heap::new();
+        let handle = heap.alloc_closure(0x1234, vec![Value::Number(1)]);
+        assert_eq!(heap.closure_get_capture(handle, 5), Value::Nil);
+    }
+
+    #[test]
+    fn collect_traces_through_a_closure_capture() {
+        let mut heap = Heap::new();
+        let inner = heap.alloc_string("captured".to_string());
+        let closure = heap.alloc_closure(0x1234, vec![Value::Str(inner)]);
+        heap.collect(&[Value::Closure(closure)]);
+
+        assert_eq!(heap.get_string(inner), "captured");
+    }
+
+    #[test]
+    fn collect_frees_a_closure_once_its_only_reference_is_gone() {
+        let mut heap = Heap::new();
+        heap.alloc_closure(0x1234, vec![Value::Number(1)]);
+        heap.collect(&[]);
+
+        let reused = heap.alloc_closure(0x5678, vec![Value::Number(2)]);
         assert!(reused.index() < 1, "expected the freed slot to be reused");
     }
 

@@ -30,6 +30,7 @@ pub const TAG_STR: i64 = 3;
 pub const TAG_ARRAY: i64 = 4;
 pub const TAG_FUNCTION: i64 = 5;
 pub const TAG_STRUCT: i64 = 6;
+pub const TAG_CLOSURE: i64 = 7;
 
 /// The ABI boundary type: a fixed `{i64, i64}` layout so codegen can build
 /// and read one directly as an LLVM struct, with no padding ambiguity.
@@ -84,6 +85,7 @@ impl RtValue {
             TAG_STR => Value::Str(handle_from_raw_index(self.payload as u32)),
             TAG_ARRAY => Value::Array(handle_from_raw_index(self.payload as u32)),
             TAG_STRUCT => Value::Struct(handle_from_raw_index(self.payload as u32)),
+            TAG_CLOSURE => Value::Closure(handle_from_raw_index(self.payload as u32)),
             TAG_FUNCTION => Value::Function(self.payload as usize),
             _ => Value::Nil,
         }
@@ -104,6 +106,10 @@ impl RtValue {
             },
             Value::Struct(handle) => RtValue {
                 tag: TAG_STRUCT,
+                payload: handle.index() as i64,
+            },
+            Value::Closure(handle) => RtValue {
+                tag: TAG_CLOSURE,
                 payload: handle.index() as i64,
             },
             Value::Function(pointer) => RtValue::function(pointer),
@@ -420,6 +426,77 @@ pub unsafe extern "C" fn druk_rt_struct_set(
 }
 
 /// # Safety
+/// `out` must point to a valid, writable `RtValue` slot. `captures` must
+/// point to at least `len` valid, initialized contiguous [`RtValue`]
+/// structs, alive for the duration of this call. Codegen only ever passes
+/// a pointer to a stack buffer it just finished writing.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_make_closure(
+    out: *mut RtValue,
+    function_ptr: i64,
+    captures: *const RtValue,
+    len: usize,
+) {
+    let slice = std::slice::from_raw_parts(captures, len);
+    let values: Vec<Value> = slice.iter().map(|value| value.to_value()).collect();
+    let mut guard = heap()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    maybe_collect(&mut guard, &values);
+    let handle = guard.alloc_closure(function_ptr as usize, values);
+    *out = RtValue {
+        tag: TAG_CLOSURE,
+        payload: handle.index() as i64,
+    };
+}
+
+/// Resolves the raw code pointer to call for `object`: a closure's stored
+/// function pointer, or (for a plain function value, which carries no
+/// environment) its payload directly, the same raw pointer convention
+/// [`RtValue::function`] already uses. This is the one place
+/// `druk-codegen-llvm` needs to tell a closure and a plain function value
+/// apart; every other call-site detail (the leading `self` argument, the
+/// rest of the call's arguments) is identical for both.
+///
+/// # Safety
+/// `object` must point to a valid `RtValue`, alive for the duration of this
+/// call.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_closure_function_ptr(object: *const RtValue) -> i64 {
+    let object = *object;
+    if object.tag == TAG_CLOSURE {
+        let handle = handle_from_raw_index(object.payload as u32);
+        let guard = heap()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.closure_function_ptr(handle) as i64
+    } else {
+        object.payload
+    }
+}
+
+/// # Safety
+/// `object` must point to a valid `RtValue`, alive for the duration of this
+/// call.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_closure_get_capture(
+    out: *mut RtValue,
+    object: *const RtValue,
+    index: i64,
+) {
+    let object = *object;
+    if object.tag != TAG_CLOSURE {
+        *out = RtValue::nil();
+        return;
+    }
+    let handle = handle_from_raw_index(object.payload as u32);
+    let guard = heap()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *out = RtValue::from_value(guard.closure_get_capture(handle, index.max(0) as usize));
+}
+
+/// # Safety
 /// `out`, `a`, and `b` must each point to a valid `RtValue` (`out`
 /// writable), alive for the duration of this call.
 #[no_mangle]
@@ -513,6 +590,18 @@ mod tests {
         out
     }
 
+    unsafe fn make_closure(function_ptr: i64, captures: &[RtValue]) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_make_closure(&mut out, function_ptr, captures.as_ptr(), captures.len());
+        out
+    }
+
+    unsafe fn closure_get_capture(object: RtValue, index: i64) -> RtValue {
+        let mut out = RtValue::nil();
+        druk_rt_closure_get_capture(&mut out, &object, index);
+        out
+    }
+
     #[test]
     fn prints_a_number_and_a_string() {
         let _guard = TEST_HEAP_LOCK
@@ -581,6 +670,26 @@ mod tests {
         unsafe { struct_set(point, "x", RtValue::number(99)) };
         let got = unsafe { struct_get(point, "x") };
         assert_eq!(got.payload, 99);
+    }
+
+    #[test]
+    fn builds_and_reads_a_closure_capture() {
+        let _guard = TEST_HEAP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let closure = unsafe { make_closure(0x1234, &[RtValue::number(42)]) };
+        assert_eq!(closure.tag, TAG_CLOSURE);
+        let function_ptr = unsafe { druk_rt_closure_function_ptr(&closure) };
+        assert_eq!(function_ptr, 0x1234);
+        let captured = unsafe { closure_get_capture(closure, 0) };
+        assert_eq!(captured.payload, 42);
+    }
+
+    #[test]
+    fn closure_function_ptr_on_a_plain_function_value_is_its_payload() {
+        let function_value = RtValue::function(0x5678);
+        let function_ptr = unsafe { druk_rt_closure_function_ptr(&function_value) };
+        assert_eq!(function_ptr, 0x5678);
     }
 
     #[test]
