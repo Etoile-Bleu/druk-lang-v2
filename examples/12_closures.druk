@@ -1,0 +1,14 @@
+གྲངས་ n = ༥;
+གྲངས་ add_n = m -> m + n;
+བཀོད་ add_n(༣);
+
+གྲངས་ make_adder_base = ༡༠;
+གྲངས་ add_ten = (x, y) -> x + y + make_adder_base;
+བཀོད་ add_ten(༡, ༢);
+
+ལས་འགན་ make_adder(གྲངས་ base) {
+    སླར་ལོག་ m -> m + base;
+}
+
+གྲངས་ add_five = make_adder(༥);
+བཀོད་ add_five(༡༠༠);
