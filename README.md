@@ -57,7 +57,7 @@ workspace instead of a single sprawling source tree, compiling through LLVM.
 `སླར་ལོག་` is `return`, and `༡༠`/`༥`/`༧` are Tibetan digits. See
 [docs/dzongkha_reference.md](docs/dzongkha_reference.md) for the full keyword table and
 [examples/](examples/) for runnable programs covering arithmetic, control flow, loops, functions,
-recursion, lambdas, pattern matching, and arrays.
+recursion, lambdas, pattern matching, arrays, and structs.
 
 ## Quick start
 
@@ -91,12 +91,11 @@ way.
 ## Status
 
 The full pipeline (lexer, parser, HIR, IR, LLVM codegen, JIT execution, a real mark-and-sweep GC)
-runs end to end on both Linux and Windows, verified by CI. All 10 bundled `examples/*.druk`
-programs compile and execute correctly via `druk run`.
+runs end to end on both Linux and Windows, verified by CI. All 11 bundled `examples/*.druk`
+programs compile and execute correctly via `druk run`, including structs.
 
 Known gaps, none of which the bundled examples need:
 
-- Structs (literal + field access), documented in the language reference but not yet lowered
 - The Dzongkha builtins (`len`, `push`, `pop`, `typeof`, `keys`, `values`, `contains`, `input`)
 - Lambdas that capture a variable from an enclosing scope
 - Native (ahead-of-time) compilation to a standalone executable; currently JIT-only via `druk run`
