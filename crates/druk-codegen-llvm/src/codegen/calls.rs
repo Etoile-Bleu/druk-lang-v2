@@ -25,7 +25,7 @@ impl<'ctx> CodeGen<'ctx> {
         let callee_value = values[0];
         let arg_values = &values[1..];
 
-        let self_ptr = self.value_ptr(callee_value);
+        let self_ptr = self.value_ptr(function, callee_value);
         let fn_ptr_int = self.closure_function_ptr(self_ptr);
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let fn_ptr = unwrap_build(
@@ -64,7 +64,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let len = values.len() as u32;
         let buffer_ty = self.value_ty.array_type(len);
-        let buffer = unwrap_build(self.builder.build_alloca(buffer_ty, "closure_captures"));
+        let buffer = self.build_entry_alloca(function, buffer_ty, "closure_captures");
         for (index, value) in values.into_iter().enumerate() {
             let slot_ptr = self.array_slot_ptr(buffer_ty, buffer, index as u32);
             unwrap_build(self.builder.build_store(slot_ptr, value));
@@ -81,6 +81,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let len_value = self.context.i64_type().const_int(len as u64, false);
         Ok(self.call_with_out_param(
+            function,
             self.runtime.make_closure,
             &[function_ptr_int.into(), buffer.into(), len_value.into()],
             "call_make_closure",
