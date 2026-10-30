@@ -1,7 +1,7 @@
 # Architecture
 
 Druk is a layered Cargo workspace. Each phase of the compilation pipeline is its own crate, with
-strictly one-directional dependencies — no crate depends on anything to its right in the pipeline
+strictly one-directional dependencies: no crate depends on anything to its right in the pipeline
 below, and nothing downstream of `druk-ir` leaks back upstream.
 
 ```mermaid
@@ -32,23 +32,23 @@ flowchart LR
 
 ```text
 crates/
-  druk-diagnostics/   Span, Diagnostic, Label — zero deps on any other Druk crate
+  druk-diagnostics/   Span, Diagnostic, Label, zero deps on any other Druk crate
   druk-lexer/          source text -> token stream (logos, Tibetan script aware)
   druk-ast/            syntax tree: arena + typed IDs
   druk-parser/         token stream -> AST (hand-written recursive descent + Pratt)
   druk-hir/            AST -> HIR: name resolution + type checking
   druk-ir/             HIR -> backend-agnostic IR, defines `trait CodegenBackend`
-  druk-codegen-llvm/   implements CodegenBackend with inkwell — the ONLY crate depending on LLVM
+  druk-codegen-llvm/   implements CodegenBackend with inkwell, the ONLY crate depending on LLVM
   druk-gc/             mark-and-sweep heap, handle-based (no raw pointers between objects)
   druk-runtime/        array/string ops called via extern "C" from generated code
   druk-driver/         orchestrates lex -> parse -> hir -> ir -> codegen, aggregates diagnostics
-  druk/                CLI binary (clap) — zero compiler logic of its own
+  druk/                CLI binary (clap), zero compiler logic of its own
 ```
 
 Dependency rule: each crate depends only on the crates to its left in the pipeline above (plus
 `druk-diagnostics`, which everything may depend on). `druk-codegen-llvm` and `druk-gc`/
-`druk-runtime` are siblings, not a chain — both are pulled in by `druk-driver`, neither depends on
-the other.
+`druk-runtime` are siblings, not a chain: both are pulled in by `druk-driver`, and neither depends
+on the other.
 
 ## The `CodegenBackend` trait is the port boundary
 
@@ -59,7 +59,7 @@ pub trait CodegenBackend {
 ```
 
 This plays the same role a port trait plays in hexagonal architecture: it's owned by `druk-ir`,
-implemented by `druk-codegen-llvm`. Everything upstream of `druk-ir` — lexer, parser, HIR — never
+implemented by `druk-codegen-llvm`. Everything upstream of `druk-ir` (lexer, parser, HIR) never
 needs to know LLVM exists. That isolation is what makes a second backend (Cranelift for fast dev
 builds, a tree-walking interpreter for a REPL) addable later without touching the frontend, and
 it's what keeps every `unsafe`/FFI call concentrated in one crate instead of smeared across the
@@ -129,8 +129,8 @@ threshold-and-grow heuristic, the same one `clox` and Lua use) before `druk_rt_m
 ## `lib.rs` is a thin entry point, never where the logic lives
 
 Within a crate, `lib.rs` (or `main.rs` for `druk`) holds `mod` declarations, `pub use`
-re-exports, and at most the crate's single top-level entry function — not the implementation
-behind it. `druk-parser` splits into `statements.rs` / `expressions.rs` / `patterns.rs`;
+re-exports, and at most the crate's single top-level entry function, not the implementation behind
+it. `druk-parser` splits into `statements.rs` / `expressions.rs` / `patterns.rs`;
 `druk-codegen-llvm` splits into `runtime_fns.rs` (the `extern "C"` declarations) and `codegen.rs`
 (`CodeGen` and its `compile_*` methods). This is how `rustc`'s own internal crates, `serde`, and
 `tokio` are organized, and it's the trigger to check whenever a single file is pushing 400-500
@@ -139,7 +139,7 @@ lines.
 ## Where the GC and runtime live
 
 `druk-gc` is infrastructure (a heap), `druk-runtime` is the set of operations Druk programs call
-into at runtime — keep them as two crates, not one, the same way a web backend keeps its DB pool
+into at runtime; keep them as two crates, not one, the same way a web backend keeps its DB pool
 separate from the use-cases that call it. `druk-runtime`'s functions are `extern "C" fn` so
 `druk-codegen-llvm` can `declare` and call them from generated LLVM IR; `druk-runtime` is the only
 crate (besides `druk-codegen-llvm` itself) that needs to know the ABI details of the generated

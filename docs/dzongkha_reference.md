@@ -1,4 +1,4 @@
-# Druk Language — Référence Dzongkha Complète
+# Druk Language : Référence Dzongkha Complète
 
 > **Druk** (འབྲུག་) est un langage de programmation dont tous les mots-clés sont en **dzongkha**,
 > la langue nationale du Bhoutan. Le script utilisé est le script tibétain (Uchen), commun aux deux langues.
@@ -47,14 +47,14 @@ Ces fonctions sont appelées comme des identifiants normaux.
 
 | Identifiant | Signification | Équivalent |
 |---|---|---|
-| `རིང་ཚད` | *ring tshad* — "longueur, taille" | `len()` |
-| `སྣོན་` | *snon* — "ajouter" | `push()` |
-| `བཏོན་` | *bton* — "extraire, sortir" | `pop()` |
-| `རིགས་` | *rigs* — "type, catégorie" | `typeof()` |
-| `ལྡེ་མིག་` | *lde mig* — "clés" | `keys()` |
-| `གནས་གོང་` | *gnas gong* — "valeurs" | `values()` |
-| `ནང་འདུས་` | *nang 'dus* — "contient" | `contains()` |
-| `ནང་འཇུག་` | *nang 'jug* — "entrée" | `input()` |
+| `རིང་ཚད` | *ring tshad* : "longueur, taille" | `len()` |
+| `སྣོན་` | *snon* : "ajouter" | `push()` |
+| `བཏོན་` | *bton* : "extraire, sortir" | `pop()` |
+| `རིགས་` | *rigs* : "type, catégorie" | `typeof()` |
+| `ལྡེ་མིག་` | *lde mig* : "clés" | `keys()` |
+| `གནས་གོང་` | *gnas gong* : "valeurs" | `values()` |
+| `ནང་འདུས་` | *nang 'dus* : "contient" | `contains()` |
+| `ནང་འཇུག་` | *nang 'jug* : "entrée" | `input()` |
 
 ---
 
@@ -93,7 +93,7 @@ Tous les opérateurs utilisent des symboles ASCII standard.
 | Booléen | `བདེན་རྫུན་` | vrai/faux | `བདེན་པ་` |
 | Tableau | *(littéral)* | Dynamique, GC | `[༡, ༢, ༣]` |
 | Struct | *(littéral)* | Champs nommés, GC | `{clé: valeur}` |
-| Nil | `ཅི་མེད` | Valeur nulle | — |
+| Nil | `ཅི་མེད` | Valeur nulle | N/A |
 
 ---
 
@@ -118,7 +118,7 @@ Les nombres multi-chiffres s'écrivent normalement : `༡༢༣` = 123, `༡༠�
 
 ---
 
-## 7. Syntaxe complète — Exemples
+## 7. Syntaxe complète : Exemples
 
 ### Déclaration de variable
 ```

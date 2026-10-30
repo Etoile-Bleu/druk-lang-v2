@@ -15,8 +15,8 @@
 //!
 //! Correctness here rests entirely on `roots` actually naming every heap
 //! value the running program can still read at the moment of collection.
-//! This crate has no way to discover that on its own — LLVM-generated code
-//! carries no stack maps `collect` could scan — so finding and supplying a
+//! This crate has no way to discover that on its own: LLVM-generated code
+//! carries no stack maps `collect` could scan, so finding and supplying a
 //! complete root set across every active call frame (including recursive
 //! calls) is the caller's job, done at the `druk-runtime`/`druk-codegen-llvm`
 //! boundary, and is deliberately out of scope for this crate.
@@ -38,7 +38,7 @@ impl Handle {
 /// Reconstructs a handle from the raw index a [`Value`] was packed into to
 /// cross the FFI boundary into generated code. This exists for
 /// `druk-runtime` to unpack a handle this same heap already produced from
-/// one of its `alloc_*` methods — it is not a general way to fabricate a
+/// one of its `alloc_*` methods. It is not a general way to fabricate a
 /// handle to an arbitrary slot, and nothing outside the runtime layer calls it.
 pub fn handle_from_raw_index(index: u32) -> Handle {
     Handle(index)
@@ -85,7 +85,7 @@ enum Slot {
 const INITIAL_GC_THRESHOLD: usize = 256;
 
 /// After a collection, the next one is due once the live set grows to this
-/// multiple of its current size — the same grow-proportionally-to-live-set
+/// multiple of its current size, the same grow-proportionally-to-live-set
 /// heuristic `clox` and Lua use, so collection frequency adapts to how much
 /// of the heap is actually garbage instead of firing on a fixed interval.
 const GC_GROWTH_FACTOR: usize = 2;
@@ -116,7 +116,7 @@ impl Heap {
 
     /// Whether the live set has grown enough since the last collection (or
     /// since the heap was created) to be worth collecting again. The caller
-    /// decides when to actually check this and call [`Heap::collect`] —
+    /// decides when to actually check this and call [`Heap::collect`],
     /// typically at a point where it can also supply a complete root set.
     pub fn should_collect(&self) -> bool {
         self.live_count >= self.next_gc

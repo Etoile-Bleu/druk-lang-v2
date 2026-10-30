@@ -25,7 +25,7 @@ pub enum Type {
     },
     /// A type that could not be determined (an untyped lambda parameter, the
     /// result of a call through an untyped binding, ...). Comparisons
-    /// against `Unknown` never produce a diagnostic — it exists so one
+    /// against `Unknown` never produce a diagnostic. It exists so one
     /// unresolved type does not cascade into unrelated false positives.
     Unknown,
 }
