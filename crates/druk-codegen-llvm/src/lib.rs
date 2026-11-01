@@ -188,8 +188,20 @@ pub fn compile_to_object(module: &IrModule, object_path: &Path) -> Result<(), Di
     // machine's own CPU risks an illegal-instruction crash on an older
     // one. A later `--target-cpu` flag can offer the tighter,
     // build-machine-only tuning for whoever explicitly wants it.
+    // `-relocation-model=pic`: `rustc`'s own final link defaults to a
+    // position-independent executable (`-pie`) on Linux, which rejects an
+    // object file compiled with `llc`'s own default (non-PIC) relocation
+    // model with "relocation R_X86_64_32 cannot be used against local
+    // symbol". Windows PE objects aren't affected by this distinction
+    // either way, so this is safe to pass unconditionally rather than
+    // branching on target OS.
     let result = std::process::Command::new("llc")
-        .args(["-filetype=obj", "-mcpu=generic", "-O2"])
+        .args([
+            "-filetype=obj",
+            "-mcpu=generic",
+            "-O2",
+            "-relocation-model=pic",
+        ])
         .arg(&bitcode_path)
         .arg("-o")
         .arg(object_path)
