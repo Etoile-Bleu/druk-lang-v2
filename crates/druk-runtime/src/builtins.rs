@@ -26,6 +26,38 @@ pub fn set_args(args: Vec<String>) {
     let _ = ARGS.set(args);
 }
 
+/// Records a natively-compiled program's own command-line arguments from
+/// the real `argc`/`argv` its OS process entry point received, skipping
+/// `argv[0]` (the executable's own path) so a native binary's `argv`/`argc`
+/// agree with `druk run script.druk a b`'s (which never includes `druk`
+/// itself or the script path either). Called once, from the generated
+/// `main`'s own prologue, before any user code runs; see
+/// `druk-codegen-llvm`'s `MainKind::Native`.
+///
+/// # Safety
+/// `argv` must be null, or point to at least `argc.max(0)` valid pointers,
+/// each either null or pointing to a null-terminated byte string, for the
+/// duration of this call. A real OS process entry point's `argv` always
+/// satisfies this.
+#[no_mangle]
+pub unsafe extern "C" fn druk_rt_init_args(argc: i32, argv: *const *const std::ffi::c_char) {
+    let mut args = Vec::new();
+    if !argv.is_null() {
+        for index in 1..argc.max(0) {
+            let arg_ptr = *argv.add(index as usize);
+            if arg_ptr.is_null() {
+                continue;
+            }
+            args.push(
+                std::ffi::CStr::from_ptr(arg_ptr)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    set_args(args);
+}
+
 /// # Safety
 /// `out` and `object` must each point to a valid `RtValue` (`out`
 /// writable), alive for the duration of this call.
