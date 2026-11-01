@@ -26,6 +26,10 @@ pub enum TokenKind {
     KwWhile,
     #[token("རེ་རེར་")]
     KwFor,
+    #[token("ཆད་")]
+    KwBreak,
+    #[token("མུ་མཐུད་")]
+    KwContinue,
     #[token("སླར་ལོག་")]
     KwReturn,
     #[token("འགྲིག་པ་")]
@@ -187,6 +191,8 @@ mod tests {
             ("མེད་ན་", TokenKind::KwElse),
             ("ཡང་བསྐྱར་", TokenKind::KwWhile),
             ("རེ་རེར་", TokenKind::KwFor),
+            ("ཆད་", TokenKind::KwBreak),
+            ("མུ་མཐུད་", TokenKind::KwContinue),
             ("སླར་ལོག་", TokenKind::KwReturn),
             ("འགྲིག་པ་", TokenKind::KwMatch),
             ("བཀོད་", TokenKind::KwPrint),
@@ -252,6 +258,26 @@ mod tests {
                 TokenKind::Ident,
                 TokenKind::Star,
                 TokenKind::Integer,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_break_and_continue_inside_a_while_body() {
+        let source = "ཡང་བསྐྱར་ (བདེན་པ་) { ཆད་; མུ་མཐུད་; }";
+        assert_eq!(
+            kinds(source),
+            vec![
+                TokenKind::KwWhile,
+                TokenKind::LParen,
+                TokenKind::KwTrue,
+                TokenKind::RParen,
+                TokenKind::LBrace,
+                TokenKind::KwBreak,
+                TokenKind::Semi,
+                TokenKind::KwContinue,
+                TokenKind::Semi,
+                TokenKind::RBrace,
             ]
         );
     }
