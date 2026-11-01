@@ -29,9 +29,11 @@ deviation, not a single cherry-picked number).
 - **`druk build (native, prebuilt)` is the same program ahead-of-time compiled once with `druk
   build`, then just executed**, the same way the C column is measured. It isolates generated-code
   speed from JIT compile time, and is the fairer of the two Druk columns to compare against C.
-  Both columns currently emit the exact same `OptimizationLevel::None` code shape (see
-  `druk-codegen-llvm`), so any gap between them below is JIT-startup overhead, not a difference in
-  the code each backend produces.
+  The two backends do not currently use the same optimization level: `druk run`'s JIT uses
+  `OptimizationLevel::None`, while `druk build` already shells out to `llc -O2` (see
+  `druk-codegen-llvm`). So the gap between them below is a mix of JIT-startup overhead and a real
+  codegen-quality difference, not purely the former; there is no way yet to control either
+  backend's optimization level from the CLI, which is tracked separately.
 
 ## Methodology
 
@@ -133,10 +135,10 @@ practice than CPython's own list growth and boxed-integer overhead at this size.
   `examples/` both lean toward).
 - `druk build`'s native binaries are consistently at or ahead of `druk run`'s JIT, and the gap
   widens for short-running programs, where JIT compile time at startup is a larger fraction of
-  total wall time. Both backends currently emit the same `OptimizationLevel::None` code shape (see
-  `druk-codegen-llvm`), so this gap is purely about when compilation happens, not what code either
-  backend produces; it isn't expected to widen further until one backend gets its own optimization
-  pipeline.
+  total wall time. Part of this gap is also a real codegen-quality difference: `druk build`
+  already shells out to `llc -O2`, while `druk run`'s JIT uses `OptimizationLevel::None`. Neither
+  is currently controllable from the CLI; exposing and unifying an optimization-level flag across
+  both backends is tracked as a follow-up.
 - Function-call overhead is Druk's clearest current weakness relative to even a plain, pre-JIT
   Lua interpreter, in both backends equally. Recursive algorithms (the shape of several bundled
   examples, e.g. `06_recursion.druk`) pay this cost directly.
