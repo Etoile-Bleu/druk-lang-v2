@@ -110,6 +110,24 @@ this whole suite — `push`/array indexing go through a handle-based GC heap wit
 operation (see `druk-runtime`), evidently cheaper in practice than CPython's own list growth and
 boxed-integer overhead at this size.
 
+### `druk run` (JIT) vs `druk build` (native), `fib`
+
+Added when native compilation (`druk build`) landed, per this project's own rule (see the
+`DrukCompiler` skill's testing notes) that a new codegen path gets a before/after benchmark rather
+than an unmeasured "it's faster now" claim:
+
+| Command | Mean | Relative |
+|:---|---:|---:|
+| `druk run` (JIT) | 1.011 s ± 0.015 s | 1.02x slower |
+| `druk build`, prebuilt binary | 987.0 ms ± 10.7 ms | 1.00x (baseline) |
+
+Within noise of each other. Both backends emit the same `OptimizationLevel::None` code shape for
+the same IR, and `fib(33)` runs long enough (about a second either way) that LLVM's JIT compile
+time at startup is a rounding error next to it. The two backends are not expected to diverge
+meaningfully until either gets its own optimization pipeline; this entry exists to make that an
+observed fact for this program rather than an assumption, and to give a baseline a later
+optimization pass can be measured against.
+
 ## Takeaways (as of this writing)
 
 - Druk is already competitive with, or faster than, CPython on loop- and array-heavy code, which

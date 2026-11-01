@@ -27,6 +27,7 @@ pub(crate) struct RuntimeFns<'ctx> {
     pub(crate) input: FunctionValue<'ctx>,
     pub(crate) argv: FunctionValue<'ctx>,
     pub(crate) argc: FunctionValue<'ctx>,
+    pub(crate) init_args: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeFns<'ctx> {
@@ -165,6 +166,12 @@ impl<'ctx> RuntimeFns<'ctx> {
             module.add_function("druk_rt_argv", void_t.fn_type(&[ptr_t.into()], false), None);
         let argc =
             module.add_function("druk_rt_argc", void_t.fn_type(&[ptr_t.into()], false), None);
+        let i32_t = context.i32_type();
+        let init_args = module.add_function(
+            "druk_rt_init_args",
+            void_t.fn_type(&[i32_t.into(), ptr_t.into()], false),
+            None,
+        );
 
         Self {
             print,
@@ -189,6 +196,7 @@ impl<'ctx> RuntimeFns<'ctx> {
             input,
             argv,
             argc,
+            init_args,
         }
     }
 
@@ -266,5 +274,9 @@ impl<'ctx> RuntimeFns<'ctx> {
         );
         engine.add_global_mapping(&self.argv, druk_runtime::druk_rt_argv as *const () as usize);
         engine.add_global_mapping(&self.argc, druk_runtime::druk_rt_argc as *const () as usize);
+        engine.add_global_mapping(
+            &self.init_args,
+            druk_runtime::druk_rt_init_args as *const () as usize,
+        );
     }
 }

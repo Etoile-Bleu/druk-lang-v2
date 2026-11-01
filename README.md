@@ -70,6 +70,10 @@ git clone https://github.com/Etoile-Bleu/druk-lang-v2.git
 cd druk-lang-v2
 # set up LLVM first, see Building below
 cargo run -p druk -- run examples/01_hello.druk
+
+# or compile it to a standalone native executable instead of JIT-running it
+cargo run -p druk -- build examples/01_hello.druk -o hello
+./hello
 ```
 
 ## Workspace layout
@@ -94,12 +98,16 @@ way.
 
 ## Status
 
-The full pipeline (lexer, parser, HIR, IR, LLVM codegen, JIT execution, a real mark-and-sweep GC)
-runs end to end on both Linux and Windows, verified by CI. All 20 bundled `examples/*.druk`
-programs compile and execute correctly via `druk run`, including structs, closures that capture a
+The full pipeline (lexer, parser, HIR, IR, LLVM codegen, a real mark-and-sweep GC) runs end to end
+on both Linux and Windows, verified by CI, through either of two backends: `druk run` JIT-executes
+a `.druk` file directly, and `druk build` compiles it ahead-of-time to a standalone native
+executable (via `llc` for object emission and `rustc` for the final link against `druk-runtime`,
+both of which need to be on `PATH`; see Building below). All 20 bundled `examples/*.druk` programs
+compile and execute correctly through both paths, including structs, closures that capture a
 variable from their immediately enclosing scope, and the Dzongkha builtins `len`, `push`, `pop`,
 `typeof`, `input`, `argv`, and `argc` (`argv`/`argc` reflect the program's own real command-line
-arguments, passed after the script path to `druk run`).
+arguments: everything after the script path for `druk run`, or a natively-built program's own real
+`argv`/`argc` from the OS for a `druk build`-compiled executable).
 
 Known gaps, none of which the bundled examples need:
 
@@ -107,7 +115,7 @@ Known gaps, none of which the bundled examples need:
   have yet
 - Lambdas nested two or more levels deep capturing from further than their immediate enclosing
   scope
-- Native (ahead-of-time) compilation to a standalone executable; currently JIT-only via `druk run`
+- Cross-compilation for `druk build`: it only targets the host it runs on for now
 - A language server, editor extension, or web playground
 
 ## Building
@@ -117,8 +125,13 @@ depends on it, via `inkwell`).
 
 1. Install LLVM 22 with static libraries (a prebuilt `clang+llvm-22.*`/`LLVM-22.*` archive from
    [the LLVM releases page](https://github.com/llvm/llvm-project/releases) works; it must ship
-   `bin/llvm-config`).
-2. Point `llvm-sys` at it: `export LLVM_SYS_221_PREFIX=/path/to/llvm-22.x`.
+   `bin/llvm-config` and `bin/llc`).
+2. Point `llvm-sys` at it: `export LLVM_SYS_221_PREFIX=/path/to/llvm-22.x`, and add its `bin/`
+   directory to `PATH` too: `druk build` (native compilation) shells out to `llc` at *run* time,
+   not just at `druk-codegen-llvm`'s own build time (`llvm-sys` only needs the prefix env var; the
+   `druk` binary itself needs `llc` findable on `PATH` to compile anything). `druk build` also
+   shells out to `rustc` to link the final executable, which a normal Rust toolchain install
+   already puts on `PATH`.
 3. On Windows, some prebuilt LLVM archives list `xml2s.lib` as a system dependency via
    `llvm-config --system-libs` without actually shipping it, which fails the link step with
    `LNK1181`. Work around it with an empty stub library on the linker search path:

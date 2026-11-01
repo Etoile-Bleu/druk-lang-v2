@@ -13,6 +13,8 @@
 mod codegen;
 mod runtime_fns;
 
+use std::path::Path;
+
 use inkwell::context::Context;
 use inkwell::AddressSpace;
 use inkwell::OptimizationLevel;
@@ -20,7 +22,7 @@ use inkwell::OptimizationLevel;
 use druk_diagnostics::Diagnostic;
 use druk_ir::Module as IrModule;
 
-use codegen::CodeGen;
+use codegen::{CodeGen, MainKind};
 use runtime_fns::RuntimeFns;
 
 /// Compiles `module` and runs its top-level program via LLVM's JIT, with
@@ -66,7 +68,7 @@ pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
             function.locals,
             &function.capture_slots,
             &function.body,
-            false,
+            MainKind::NotMain,
         )?;
     }
     codegen.compile_function(
@@ -75,7 +77,7 @@ pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
         module.main.locals,
         &[],
         &module.main.body,
-        true,
+        MainKind::Jit,
     )?;
 
     let engine = llvm_module
@@ -91,6 +93,132 @@ pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
             .get_function::<unsafe extern "C" fn()>("main")
             .map_err(|err| Diagnostic::error(format!("failed to locate compiled main: {err}")))?;
         jit_main.call();
+    }
+
+    Ok(())
+}
+
+/// Compiles `module` to a native object file at `object_path`, for the
+/// current host (cross-compilation to another target is out of scope for
+/// now). The emitted `main` has the real C entry signature
+/// `main(argc, argv) -> i32`, since the final linked executable's actual
+/// OS process entry point is this `main`, unlike the JIT path's `run`,
+/// where the already-running `druk` process's own `main` calls into it.
+/// Linking the object file against `druk-runtime` into a finished
+/// executable is the caller's job (see `druk-driver`), since it needs a
+/// system linker this crate has no reason to know how to invoke.
+///
+/// This shells out to `llc` (LLVM's standalone static compiler, which must
+/// be on `PATH`) to turn the module into an object file, rather than
+/// using inkwell's own `TargetMachine::write_to_file`/
+/// `write_to_memory_buffer`: that binding crashes non-deterministically on
+/// this backend's own generated modules, independently of LLVM version,
+/// `RelocMode`/`CodeModel`, or output method, confirmed by feeding the
+/// exact same IR to `llc` directly instead, which compiles it correctly
+/// and reliably every time. This points at a bug in inkwell's `TargetMachine`
+/// bindings for this LLVM version rather than in the generated IR itself or
+/// in LLVM's own backend, so this backend goes around it by writing
+/// bitcode (a format inkwell's own, simpler serialization is reliable for)
+/// and asking the real `llc` binary to do the risky part instead.
+pub fn compile_to_object(module: &IrModule, object_path: &Path) -> Result<(), Diagnostic> {
+    let context = Context::create();
+    let llvm_module = context.create_module("druk");
+    let builder = context.create_builder();
+    let value_ty = context.struct_type(
+        &[context.i64_type().into(), context.i64_type().into()],
+        false,
+    );
+
+    let runtime = RuntimeFns::declare(&context, &llvm_module);
+
+    let ptr_t = context.ptr_type(AddressSpace::default());
+    let mut functions = Vec::with_capacity(module.functions.len());
+    for function in &module.functions {
+        let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![ptr_t.into()];
+        for _ in 0..function.arity {
+            param_types.push(value_ty.into());
+        }
+        let fn_type = value_ty.fn_type(&param_types, false);
+        functions.push(llvm_module.add_function(&function.name, fn_type, None));
+    }
+    let i32_t = context.i32_type();
+    let main_type = i32_t.fn_type(&[i32_t.into(), ptr_t.into()], false);
+    let main_value = llvm_module.add_function("main", main_type, None);
+
+    let mut codegen = CodeGen {
+        context: &context,
+        builder: &builder,
+        value_ty,
+        runtime,
+        functions,
+        locals_ptr: None,
+        locals_ty: None,
+    };
+
+    for (index, function) in module.functions.iter().enumerate() {
+        codegen.compile_function(
+            codegen.functions[index],
+            function.arity,
+            function.locals,
+            &function.capture_slots,
+            &function.body,
+            MainKind::NotMain,
+        )?;
+    }
+    codegen.compile_function(
+        main_value,
+        0,
+        module.main.locals,
+        &[],
+        &module.main.body,
+        MainKind::Native,
+    )?;
+
+    let bitcode_path = object_path.with_extension("bc");
+    if !llvm_module.write_bitcode_to_path(&bitcode_path) {
+        return Err(Diagnostic::error(format!(
+            "failed to write bitcode to {}",
+            bitcode_path.display()
+        )));
+    }
+
+    // Deliberately "generic" rather than the exact host CPU: the point of
+    // a native build is a binary that still runs on a different machine
+    // than the one that compiled it, and tuning codegen to the build
+    // machine's own CPU risks an illegal-instruction crash on an older
+    // one. A later `--target-cpu` flag can offer the tighter,
+    // build-machine-only tuning for whoever explicitly wants it.
+    // `-relocation-model=pic`: `rustc`'s own final link defaults to a
+    // position-independent executable (`-pie`) on Linux, which rejects an
+    // object file compiled with `llc`'s own default (non-PIC) relocation
+    // model with "relocation R_X86_64_32 cannot be used against local
+    // symbol". Windows PE objects aren't affected by this distinction
+    // either way, so this is safe to pass unconditionally rather than
+    // branching on target OS.
+    let result = std::process::Command::new("llc")
+        .args([
+            "-filetype=obj",
+            "-mcpu=generic",
+            "-O2",
+            "-relocation-model=pic",
+        ])
+        .arg(&bitcode_path)
+        .arg("-o")
+        .arg(object_path)
+        .output();
+
+    let _ = std::fs::remove_file(&bitcode_path);
+
+    let output = result.map_err(|err| {
+        Diagnostic::error(format!(
+            "failed to run llc (is LLVM's `llc` on PATH?): {err}"
+        ))
+    })?;
+    if !output.status.success() {
+        return Err(Diagnostic::error(format!(
+            "llc failed to emit a native object file:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
 
     Ok(())
@@ -223,6 +351,36 @@ mod tests {
             run();
             "#,
         );
+    }
+
+    #[test]
+    fn emits_an_object_file_for_every_bundled_example() {
+        let examples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
+        let entries = std::fs::read_dir(examples_dir).expect("examples dir exists");
+        for entry in entries {
+            let path = entry.expect("readable dir entry").path();
+            if path.extension().map(|ext| ext == "druk").unwrap_or(false) {
+                let source = std::fs::read_to_string(&path).expect("example file is readable");
+                let (ast, parse_diagnostics) = druk_parser::parse(&source);
+                assert!(parse_diagnostics.is_empty());
+                let hir = druk_hir::check(ast).expect("source should type-check");
+                let ir = druk_ir::lower(&hir).expect("hir should lower");
+
+                let mut object_path = std::env::temp_dir();
+                object_path.push(format!(
+                    "druk_object_test_{}_{}.o",
+                    std::process::id(),
+                    path.file_stem().unwrap_or_default().to_string_lossy()
+                ));
+                let result = compile_to_object(&ir, &object_path);
+                assert!(
+                    result.is_ok(),
+                    "failed to emit an object for {path:?}: {result:?}"
+                );
+                assert!(object_path.exists());
+                let _ = std::fs::remove_file(&object_path);
+            }
+        }
     }
 
     #[test]
