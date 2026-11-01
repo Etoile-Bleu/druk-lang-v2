@@ -46,6 +46,29 @@ fn call_result(call: CallSiteValue<'_>) -> StructValue<'_> {
     }
 }
 
+/// What kind of entry point `compile_function` is generating, since `main`
+/// needs different treatment depending on which of this backend's two
+/// outputs it will become part of:
+///
+/// - [`MainKind::NotMain`]: an ordinary function, with the uniform leading
+///   `self: ptr` parameter every non-main function carries.
+/// - [`MainKind::Jit`]: the JIT path's `main`, a fixed zero-argument native
+///   entry point called directly by `run()` via `ExecutionEngine`; its own
+///   `argv`/`argc` are set ahead of time by the caller through
+///   `druk_rt::set_args`, not read from any parameter.
+/// - [`MainKind::Native`]: a natively-compiled program's real OS entry
+///   point, with the standard C `main(argc: i32, argv: **i8) -> i32`
+///   signature, since the final linked executable's actual process entry
+///   is this `main`, not anything Rust-compiled. Its prologue converts
+///   `argv`/`argc` into the same internal state `druk_rt_argv`/`argc` read,
+///   via `druk_rt_init_args`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MainKind {
+    NotMain,
+    Jit,
+    Native,
+}
+
 pub(crate) struct CodeGen<'ctx> {
     pub(crate) context: &'ctx Context,
     pub(crate) builder: &'ctx Builder<'ctx>,
