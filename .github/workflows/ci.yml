@@ -16,7 +16,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  LLVM_VERSION: 22.1.0-rc3
+  LLVM_VERSION: 22.1.7
 
 jobs:
   ci:
@@ -102,7 +102,13 @@ jobs:
       - name: Set LLVM environment (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}/llvm" >> "$GITHUB_ENV"
+        run: |
+          echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}/llvm" >> "$GITHUB_ENV"
+          # Native compilation (`druk build`) shells out to `llc` at test
+          # time, not just at `druk-codegen-llvm` build time, so its bin/
+          # directory needs to be on PATH, not just known via the prefix
+          # env var llvm-sys itself uses.
+          echo "${{ runner.temp }}/llvm/bin" >> "$GITHUB_PATH"
 
       - name: Set LLVM environment (Windows)
         if: runner.os == 'Windows'
@@ -110,6 +116,7 @@ jobs:
         run: |
           echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}\\llvm" >> "$GITHUB_ENV"
           echo "RUSTFLAGS=-L ${{ runner.temp }}\\llvm-stub-libs" >> "$GITHUB_ENV"
+          echo "${{ runner.temp }}\\llvm\\bin" >> "$GITHUB_PATH"
 
       - name: Format
         run: cargo fmt --check
