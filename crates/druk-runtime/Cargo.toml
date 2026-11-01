@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+# Built as a staticlib too (alongside the normal rlib every other crate in
+# this workspace links against) so a natively-compiled Druk program's
+# object file can be linked against it directly, without a JIT in the
+# loop. See `druk-codegen-llvm`'s native compilation path.
+crate-type = ["rlib", "staticlib"]
+
 [lints]
 workspace = true
 
