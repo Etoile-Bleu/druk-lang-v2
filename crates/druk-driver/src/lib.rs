@@ -1,7 +1,11 @@
+mod link;
+
 use std::path::Path;
 
 use druk_diagnostics::Diagnostic;
 use druk_hir::Hir;
+
+pub use link::LinkError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DriverError {
@@ -13,6 +17,8 @@ pub enum DriverError {
     },
     #[error("{} diagnostic(s) reported", .0.len())]
     Diagnostics(Vec<Diagnostic>),
+    #[error(transparent)]
+    Link(#[from] LinkError),
 }
 
 /// Runs the frontend and HIR passes (lexer, parser, name resolution, type
@@ -56,6 +62,34 @@ pub fn run_file(path: &Path, args: &[String]) -> Result<(), DriverError> {
     run_source(&source, args).map_err(DriverError::Diagnostics)
 }
 
+/// Compiles `source` to a standalone native executable at `output_path`:
+/// the full pipeline through `druk-ir`, then `druk-codegen-llvm`'s object
+/// emission, then linking that object against the `druk-runtime` static
+/// library (see `link::link_executable`). The intermediate object file is
+/// written next to `output_path` and removed again once linking finishes
+/// (or fails), successful or not.
+pub fn build_source(source: &str, output_path: &Path) -> Result<(), DriverError> {
+    let hir = check_source(source).map_err(DriverError::Diagnostics)?;
+    let ir = druk_ir::lower(&hir).map_err(DriverError::Diagnostics)?;
+
+    let object_path = output_path.with_extension("o");
+    druk_codegen_llvm::compile_to_object(&ir, &object_path)
+        .map_err(|diagnostic| DriverError::Diagnostics(vec![diagnostic]))?;
+
+    let link_result = link::link_executable(&object_path, output_path);
+    let _ = std::fs::remove_file(&object_path);
+    link_result.map_err(DriverError::Link)
+}
+
+/// Reads `path` from disk and runs [`build_source`] over its contents.
+pub fn build_file(path: &Path, output_path: &Path) -> Result<(), DriverError> {
+    let source = std::fs::read_to_string(path).map_err(|source| DriverError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    build_source(&source, output_path)
+}
+
 /// Renders every diagnostic in `diagnostics` against `source_name`/`source`,
 /// in the order they were reported.
 pub fn render_diagnostics(source_name: &str, source: &str, diagnostics: &[Diagnostic]) -> String {
@@ -96,5 +130,31 @@ mod tests {
     fn reports_a_driver_error_for_a_missing_file() {
         let result = check_file(Path::new("this/path/does/not/exist.druk"));
         assert!(matches!(result, Err(DriverError::Io { .. })));
+    }
+
+    #[test]
+    fn builds_and_runs_a_standalone_executable() {
+        let examples_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
+        let source_path = Path::new(examples_dir).join("01_hello.druk");
+
+        let mut output_path = std::env::temp_dir();
+        output_path.push(format!("druk_native_build_test_{}.exe", std::process::id()));
+
+        let build_result = build_file(&source_path, &output_path);
+        assert!(
+            build_result.is_ok(),
+            "failed to build a standalone executable: {build_result:?}"
+        );
+
+        let run_output = std::process::Command::new(&output_path)
+            .output()
+            .expect("the built executable should run");
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert!(
+            stdout.contains("Hello, Druk Lang!"),
+            "unexpected output from the standalone executable: {stdout:?}"
+        );
+
+        let _ = std::fs::remove_file(&output_path);
     }
 }
