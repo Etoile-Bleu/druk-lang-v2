@@ -26,6 +26,15 @@ enum Command {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// Compile a .druk file to a standalone native executable. Requires
+    /// LLVM's `llc` and Rust's `rustc` on `PATH`.
+    Build {
+        file: PathBuf,
+        /// Where to write the executable. Defaults to the input file's
+        /// name (without `.druk`) in the current directory.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -46,7 +55,27 @@ fn main() -> ExitCode {
             &file,
             druk_driver::run_file(&file, &args).map(|()| String::new()),
         ),
+        Command::Build { file, output } => {
+            let output = output.unwrap_or_else(|| default_output_path(&file));
+            report(
+                &file,
+                druk_driver::build_file(&file, &output)
+                    .map(|()| format!("compiled {} -> {}", file.display(), output.display())),
+            )
+        }
     }
+}
+
+/// Derives a native executable's default output path from its source
+/// file's own name: the input's file stem (dropping `.druk`), in the
+/// current directory, with the host platform's usual executable suffix
+/// (`.exe` on Windows, nothing elsewhere).
+fn default_output_path(file: &std::path::Path) -> PathBuf {
+    let stem = file
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "a".to_string());
+    PathBuf::from(format!("{stem}{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn init_logging(debug: bool) {
@@ -74,6 +103,10 @@ fn report(file: &std::path::Path, result: Result<String, DriverError>) -> ExitCo
                 "{}",
                 druk_driver::render_diagnostics(&file.display().to_string(), &source, &diagnostics)
             );
+            ExitCode::FAILURE
+        }
+        Err(DriverError::Link(err)) => {
+            eprintln!("error: {err}");
             ExitCode::FAILURE
         }
     }
