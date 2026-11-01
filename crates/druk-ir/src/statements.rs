@@ -55,6 +55,8 @@ impl<'a> Lowerer<'a> {
                     body: body_ir,
                 }
             }
+            Stmt::Break => IrStmt::Break,
+            Stmt::Continue => IrStmt::Continue,
             Stmt::Return(value) => IrStmt::Return(value.map(|value_id| self.lower_expr(value_id))),
             Stmt::FunctionDecl { .. } => {
                 self.diagnostics.push(Diagnostic::error(
