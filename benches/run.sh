@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Runs the benches in this directory through hyperfine, comparing the
-# release-built `druk` binary against Python, Lua, and a gcc -O2 build of
-# the equivalent C program, for every task named on the command line (or
-# every task in this directory if none is given).
+# Runs the benches in this directory through hyperfine, comparing
+# `druk run` (JIT), a `druk build`-compiled native executable, Python,
+# Lua, and a gcc -O2 build of the equivalent C program, for every task
+# named on the command line (or every task in this directory if none is
+# given).
 #
 # See benches/README.md for what these numbers do and don't mean before
 # drawing any conclusion from them.
@@ -55,15 +56,23 @@ for name in "${tasks[@]}"; do
     fi
 
     c_bin=""
-    cleanup_c_bin() {
+    native_bin=""
+    cleanup_bins() {
         if [ -n "$c_bin" ]; then
             rm -f "$c_bin"
         fi
+        if [ -n "$native_bin" ]; then
+            rm -f "$native_bin"
+        fi
     }
-    trap cleanup_c_bin EXIT
+    trap cleanup_bins EXIT
+
+    native_bin="benches/${name}_druk_native"
+    "$DRUK" build "$druk_file" -o "$native_bin"
 
     commands=(
-        -n "druk" "$DRUK run $druk_file"
+        -n "druk run (JIT)" "$DRUK run $druk_file"
+        -n "druk build (native, prebuilt)" "$native_bin"
         -n "python3" "$PYTHON $py_file"
         -n "lua" "$LUA $lua_file"
     )
@@ -90,7 +99,7 @@ for name in "${tasks[@]}"; do
         --export-json "$out_dir/${name}.json" \
         "${commands[@]}"
 
-    cleanup_c_bin
+    cleanup_bins
     trap - EXIT
 done
 
