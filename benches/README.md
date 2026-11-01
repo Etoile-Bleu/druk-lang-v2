@@ -1,6 +1,7 @@
 # Benchmarks
 
-Wall-clock comparisons between `druk run` and equivalent programs in Python, Lua, and C, using
+Wall-clock comparisons between `druk run` (JIT), a `druk build`-compiled native executable, and
+equivalent programs in Python, Lua, and C, using
 [hyperfine](https://github.com/sharkdp/hyperfine) (multiple runs, reported mean and standard
 deviation, not a single cherry-picked number).
 
@@ -20,12 +21,17 @@ deviation, not a single cherry-picked number).
   mostly measure that gap, not anything about Druk's own design. (A 2026 study found LuaJIT
   roughly 7x faster than the best plain Lua interpreter on the same workload — i.e. even "Lua vs
   Lua" varies by 7x on implementation maturity alone, before language design enters into it.)
-- **Druk is JIT-compiled via LLVM on every single `druk run` invocation** (there is no
-  ahead-of-time compilation yet, see the native-compilation item in the roadmap). The numbers
-  below are whole-process wall time, so they include LLVM JIT compilation on every run, not just
-  steady-state execution. This is disclosed, not hidden, because it's a real and relevant cost
-  today, but it means `druk`'s numbers don't isolate "how fast is the generated code" from "how
-  long does compiling it take."
+- **`druk run` is JIT-compiled via LLVM on every single invocation.** Its numbers are whole-process
+  wall time, so they include LLVM JIT compilation on every run, not just steady-state execution.
+  This is disclosed, not hidden, because it's a real and relevant cost today, but it means `druk
+  run`'s numbers don't isolate "how fast is the generated code" from "how long does compiling it
+  take."
+- **`druk build (native, prebuilt)` is the same program ahead-of-time compiled once with `druk
+  build`, then just executed**, the same way the C column is measured. It isolates generated-code
+  speed from JIT compile time, and is the fairer of the two Druk columns to compare against C.
+  Both columns currently emit the exact same `OptimizationLevel::None` code shape (see
+  `druk-codegen-llvm`), so any gap between them below is JIT-startup overhead, not a difference in
+  the code each backend produces.
 
 ## Methodology
 
@@ -61,7 +67,7 @@ Requires `python3`, `lua` (or set the `LUA` environment variable to its path), a
 ## Results
 
 Measured on: AMD Ryzen 7 9800X3D (8 cores / 16 threads), Windows 11, `druk` release build
-(`cargo build --release`), LLVM 22.1.0-rc3, Python 3.14.0, Lua 5.4.6, GCC 15.2.0 (MSYS2),
+(`cargo build --release`), LLVM 22.1.7, Python 3.14.0, Lua 5.4.6, GCC 15.2.0 (MSYS2),
 hyperfine 1.20.0. Re-run `./benches/run.sh` on your own machine before trusting these numbers for
 anything beyond a rough sense of where Druk currently stands; absolute times are hardware- and
 load-dependent, encoded here only as one data point, not a guarantee.
@@ -70,71 +76,69 @@ load-dependent, encoded here only as one data point, not a guarantee.
 
 | Command | Mean | Relative |
 |:---|---:|---:|
-| `druk` | 1.003 s ± 0.007 s | 146.0x slower than C |
-| `python3` | 0.352 s ± 0.011 s | 51.2x slower than C |
-| `lua` | 0.132 s ± 0.003 s | 19.3x slower than C |
-| `c` (gcc -O2, reference only) | 0.007 s ± 0.001 s | 1.0x (baseline) |
+| `druk run` (JIT) | 1.032 s ± 0.018 s | 87.3x slower than C |
+| `druk build` (native, prebuilt) | 1.005 s ± 0.035 s | 85.0x slower than C |
+| `python3` | 0.394 s ± 0.027 s | 33.4x slower than C |
+| `lua` | 0.147 s ± 0.005 s | 12.4x slower than C |
+| `c` (gcc -O2, reference only) | 0.012 s ± 0.001 s | 1.0x (baseline) |
 
-Druk is currently the slowest of the three fair comparisons on deep recursion. Every call crosses
-the closure-dispatch/GC-frame-push FFI boundary (`druk_rt_closure_function_ptr`,
-`druk_rt_push_frame`/`pop_frame`), which is real, uniform overhead paid on every single call
-regardless of whether the callee captures anything — a cost neither Python's nor Lua's own call
-path pays in the same shape. This is expected for a first LLVM backend pass and a plausible target
-for later optimization work, not a fundamental ceiling.
+`druk run` and `druk build` are within noise of each other here: `fib(33)` runs long enough
+(about a second either way) that LLVM's JIT compile time at startup is a rounding error next to
+steady-state execution. Druk is currently the slowest of the three fair comparisons on deep
+recursion regardless of backend. Every call crosses the closure-dispatch/GC-frame-push FFI
+boundary (`druk_rt_closure_function_ptr`, `druk_rt_push_frame`/`pop_frame`), which is real, uniform
+overhead paid on every single call regardless of whether the callee captures anything, a cost
+neither Python's nor Lua's own call path pays in the same shape. This is expected for a first LLVM
+backend pass and a plausible target for later optimization work, not a fundamental ceiling.
 
 ### `loop_sum` (sum 0..10,000,000 in a `while` loop)
 
 | Command | Mean | Relative |
 |:---|---:|---:|
-| `druk` | 595.7 ms ± 8.7 ms | 163.8x slower than C |
-| `python3` | 766.2 ms ± 98.1 ms | 210.7x slower than C |
-| `lua` | 53.8 ms ± 6.5 ms | 14.8x slower than C |
-| `c` (gcc -O2, reference only) | 3.6 ms ± 0.5 ms | 1.0x (baseline) |
+| `druk run` (JIT) | 601.7 ms ± 9.5 ms | 72.7x slower than C |
+| `druk build` (native, prebuilt) | 573.8 ms ± 11.8 ms | 69.3x slower than C |
+| `python3` | 816.9 ms ± 178.4 ms | 98.7x slower than C |
+| `lua` | 58.7 ms ± 3.6 ms | 7.1x slower than C |
+| `c` (gcc -O2, reference only) | 8.3 ms ± 1.1 ms | 1.0x (baseline) |
 
-Druk beats Python on a pure arithmetic loop (no function calls, no GC pressure): once LLVM has
-JIT-compiled the loop, it runs as tight native-ish code with no interpreter dispatch overhead,
-which is exactly the case this backend's design targets. It's still well behind Lua's reference
+Again within noise of each other: a 10-million-iteration loop dwarfs JIT startup cost either way.
+Both Druk backends beat Python on a pure arithmetic loop (no function calls, no GC pressure): once
+LLVM has compiled the loop, it runs as tight native-ish code with no interpreter dispatch overhead,
+which is exactly the case this backend's design targets. Both are still well behind Lua's reference
 interpreter, which this comparison doesn't fully explain on its own and is worth profiling later.
 
 ### `array_sum` (build and sum a 100,000-element array)
 
 | Command | Mean | Relative |
 |:---|---:|---:|
-| `druk` | 33.1 ms ± 3.2 ms | 8.7x slower than C |
-| `python3` | 89.6 ms ± 3.9 ms | 23.7x slower than C |
-| `lua` | 8.5 ms ± 0.7 ms | 2.2x slower than C |
-| `c` (gcc -O2, reference only) | 3.8 ms ± 0.6 ms | 1.0x (baseline) |
+| `druk run` (JIT) | 39.3 ms ± 3.6 ms | 5.0x slower than C |
+| `druk build` (native, prebuilt) | 27.3 ms ± 0.7 ms | 3.5x slower than C |
+| `python3` | 107.1 ms ± 11.9 ms | 13.6x slower than C |
+| `lua` | 14.3 ms ± 1.0 ms | 1.8x slower than C |
+| `c` (gcc -O2, reference only) | 7.9 ms ± 0.5 ms | 1.0x (baseline) |
 
-Druk beats Python here too, and is within 4x of Lua, which is the closest Druk gets to Lua in
-this whole suite — `push`/array indexing go through a handle-based GC heap with a lock per
-operation (see `druk-runtime`), evidently cheaper in practice than CPython's own list growth and
-boxed-integer overhead at this size.
-
-### `druk run` (JIT) vs `druk build` (native), `fib`
-
-Added when native compilation (`druk build`) landed, per this project's own rule (see the
-`DrukCompiler` skill's testing notes) that a new codegen path gets a before/after benchmark rather
-than an unmeasured "it's faster now" claim:
-
-| Command | Mean | Relative |
-|:---|---:|---:|
-| `druk run` (JIT) | 1.011 s ± 0.015 s | 1.02x slower |
-| `druk build`, prebuilt binary | 987.0 ms ± 10.7 ms | 1.00x (baseline) |
-
-Within noise of each other. Both backends emit the same `OptimizationLevel::None` code shape for
-the same IR, and `fib(33)` runs long enough (about a second either way) that LLVM's JIT compile
-time at startup is a rounding error next to it. The two backends are not expected to diverge
-meaningfully until either gets its own optimization pipeline; this entry exists to make that an
-observed fact for this program rather than an assumption, and to give a baseline a later
-optimization pass can be measured against.
+This is the one task where the two Druk backends genuinely diverge: `druk build` is about 1.4x
+faster than `druk run` here, unlike `fib` and `loop_sum`. `array_sum` is the shortest-running task
+in the suite (tens of milliseconds), so LLVM's JIT compile time at startup, a fixed per-invocation
+cost paid by `druk run` but not by a prebuilt `druk build` binary, is no longer a rounding error;
+it's a real fraction of the total. Both backends beat Python, and `druk build` gets within 2x of
+Lua, the closest either Druk backend gets to Lua in this whole suite. `push`/array indexing go
+through a handle-based GC heap with a lock per operation (see `druk-runtime`), evidently cheaper in
+practice than CPython's own list growth and boxed-integer overhead at this size.
 
 ## Takeaways (as of this writing)
 
 - Druk is already competitive with, or faster than, CPython on loop- and array-heavy code, which
   is the more common shape of a beginner program (the kind these benchmarks and the bundled
   `examples/` both lean toward).
+- `druk build`'s native binaries are consistently at or ahead of `druk run`'s JIT, and the gap
+  widens for short-running programs, where JIT compile time at startup is a larger fraction of
+  total wall time. Both backends currently emit the same `OptimizationLevel::None` code shape (see
+  `druk-codegen-llvm`), so this gap is purely about when compilation happens, not what code either
+  backend produces; it isn't expected to widen further until one backend gets its own optimization
+  pipeline.
 - Function-call overhead is Druk's clearest current weakness relative to even a plain, pre-JIT
-  Lua interpreter. Recursive algorithms (the shape of several bundled examples, e.g.
-  `06_recursion.druk`) pay this cost directly.
+  Lua interpreter, in both backends equally. Recursive algorithms (the shape of several bundled
+  examples, e.g. `06_recursion.druk`) pay this cost directly.
 - None of this is close to C, which is expected and, per the caveats above, not the point of this
   comparison.
