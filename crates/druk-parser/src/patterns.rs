@@ -19,8 +19,8 @@ impl<'src> Parser<'src> {
             _ => {
                 let span = self.current_span();
                 self.diagnostics.push(
-                    Diagnostic::error("expected a pattern")
-                        .with_label(span, "expected a literal or '_' here"),
+                    Diagnostic::error("expected a value to match, or '_' for anything else")
+                        .with_label(span, "expected a number, text, or '_' here"),
                 );
                 self.advance();
                 Pattern::Wildcard
