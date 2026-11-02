@@ -1,0 +1,7 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+Do you like Druk? (yes/no)
+Maybe next time.
+string

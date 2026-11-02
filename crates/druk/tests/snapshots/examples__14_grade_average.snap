@@ -1,0 +1,6 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+73
+Pass

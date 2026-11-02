@@ -1,0 +1,12 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+3
+4
+4
+3
+array
+number
+5
+0

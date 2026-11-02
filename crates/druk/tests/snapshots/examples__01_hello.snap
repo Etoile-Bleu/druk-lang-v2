@@ -1,0 +1,6 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+Hello, Druk Lang!
+བདེ་ལེགས། (Tashi Delek)

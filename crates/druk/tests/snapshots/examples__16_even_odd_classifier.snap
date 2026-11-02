@@ -1,0 +1,10 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+odd
+even
+odd
+even
+odd
+even

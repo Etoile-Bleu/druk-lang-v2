@@ -1,0 +1,9 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+150
+120
+Insufficient funds
+120
+120
