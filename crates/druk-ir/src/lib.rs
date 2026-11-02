@@ -7,13 +7,13 @@
 //! Scope for this first lowering: the ten bundled example programs plus
 //! structs, single-level lambda capture, and the Dzongkha builtins (`len`,
 //! `push`, `pop`, `typeof`, `input`, `argv`, `argc`). `keys`/`values`/
-//! `contains` depend on a dictionary type that doesn't exist yet and are
-//! reported as diagnostics rather than silently miscompiled, since no
-//! bundled example needs them. A lambda can capture a variable from its
-//! immediately enclosing scope (one level up); a lambda nested inside
-//! another lambda trying to reach two levels up is also reported as a
-//! diagnostic rather than silently miscompiled, since no bundled example
-//! needs that either.
+//! `contains` depend on a dictionary type that doesn't exist yet; `druk-hir`
+//! already rejects a call to any of them as an undefined name before
+//! lowering ever runs, so this layer never sees one. A lambda can capture a
+//! variable from its immediately enclosing scope (one level up); a lambda
+//! nested inside another lambda trying to reach two levels up is also
+//! reported as a diagnostic rather than silently miscompiled, since no
+//! bundled example needs that either.
 //!
 //! Split by responsibility into sibling files: `statements` (control flow)
 //! and `expressions` (everything else, including builtin-call resolution).
@@ -86,9 +86,9 @@ pub enum IrStmt {
 /// ordinary [`IrExpr::Call`] through a [`FunctionId`]) since none of them are
 /// Druk-defined functions with a compiled body: codegen dispatches each one
 /// straight to a fixed `druk-runtime` entry point. `keys`/`values`/
-/// `contains` are deliberately absent: they depend on a dictionary type this
-/// compiler doesn't have yet, so a call to one of them still falls through
-/// to the "not supported by the compiler yet" diagnostic.
+/// `contains` are deliberately absent: they depend on a dictionary type
+/// this compiler doesn't have yet, and `druk-hir` already rejects a call
+/// to any of them as an undefined name, so this layer never has to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinOp {
     Len,
