@@ -53,8 +53,10 @@ impl<'src> Parser<'src> {
             _ => {
                 let span = self.current_span();
                 self.diagnostics.push(
-                    Diagnostic::error("expected a type")
-                        .with_label(span, "expected one of the type keywords here"),
+                    Diagnostic::error(
+                        "expected a type, like གྲངས་ (number), ཡིག་འབྲུ་ (text), or བདེན་རྫུན་ (true/false)",
+                    )
+                    .with_label(span, "this is what's here instead"),
                 );
                 BaseType::Number
             }

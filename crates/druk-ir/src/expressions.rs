@@ -15,7 +15,7 @@ impl<'a> Lowerer<'a> {
                     IrExpr::Builtin(op, Vec::new())
                 } else {
                     self.diagnostics.push(Diagnostic::error(format!(
-                        "'{name}' is not supported by the compiler yet"
+                        "Druk doesn't know what '{name}' is"
                     )));
                     IrExpr::ConstNil
                 }
@@ -85,7 +85,7 @@ impl<'a> Lowerer<'a> {
                 return IrExpr::Builtin(op, args_ir);
             }
             self.diagnostics.push(Diagnostic::error(format!(
-                "'{name}' is not supported by the compiler yet"
+                "Druk doesn't know what '{name}' is"
             )));
             return IrExpr::ConstNil;
         }
@@ -101,8 +101,9 @@ impl<'a> Lowerer<'a> {
                 if let Some(slot) = self.resolve_local(name) {
                     IrExpr::SetLocal(slot, Box::new(value_ir))
                 } else {
-                    self.diagnostics
-                        .push(Diagnostic::error(format!("cannot assign to '{name}'")));
+                    self.diagnostics.push(Diagnostic::error(format!(
+                        "can't assign to '{name}': there is no variable with that name"
+                    )));
                     IrExpr::ConstNil
                 }
             }
@@ -116,8 +117,9 @@ impl<'a> Lowerer<'a> {
                 IrExpr::FieldSet(Box::new(object_ir), field.clone(), Box::new(value_ir))
             }
             _ => {
-                self.diagnostics
-                    .push(Diagnostic::error("invalid assignment target"));
+                self.diagnostics.push(Diagnostic::error(
+                    "the left side of '=' must be a variable, a list item (like x[0]), or a struct field (like x.y)",
+                ));
                 IrExpr::ConstNil
             }
         }
