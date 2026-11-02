@@ -15,3 +15,6 @@ path = "src/main.rs"
 druk-driver = { workspace = true }
 clap = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

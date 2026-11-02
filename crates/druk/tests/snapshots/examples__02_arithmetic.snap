@@ -1,0 +1,8 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+15
+5
+50
+2
