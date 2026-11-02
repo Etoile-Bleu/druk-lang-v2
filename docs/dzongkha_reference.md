@@ -177,6 +177,18 @@ Les nombres multi-chiffres s'écrivent normalement : `༡༢༣` = 123, `༡༠�
 བཀོད་ བསྡོམས་(༣, ༤);
 ```
 
+Le mot-clé de type sur un paramètre est optionnel : `druk-hir` déduit le type à partir de son
+usage dans le corps de la fonction (une addition implique un nombre, une condition `if` implique
+un booléen, etc.) :
+```
+ལས་འགན་ བསྡོམས་ (ཀ་, ཁ་) {
+    སླར་ལོག་ ཀ་ + ཁ་;
+}
+```
+Si l'usage ne permet pas de déduire un type sans ambiguïté (paramètre jamais utilisé, ou utilisé
+de façons contradictoires), le compilateur demande d'ajouter le mot-clé de type explicitement sur
+ce paramètre précis plutôt que d'échouer avec une erreur générique.
+
 ### Tableau
 ```
 གྲངས་ ཐོ་ཡིག་ = [༡, ༢, ༣, ༤, ༥];
