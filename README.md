@@ -67,16 +67,32 @@ macOS, and Linux.
 ## Installing a prebuilt binary
 
 Every [release](https://github.com/Etoile-Bleu/druk-lang-v2/releases) attaches a Linux and a
-Windows binary, no local LLVM or Rust toolchain required:
+Windows binary, no local LLVM or Rust toolchain required. The install script downloads the
+latest release, verifies its checksum against the `SHA256SUMS.txt` published alongside it, and
+puts `druk` on your `PATH`:
 
 ```sh
-# Linux x86_64
+# Linux
+curl -fsSL https://raw.githubusercontent.com/Etoile-Bleu/druk-lang-v2/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/Etoile-Bleu/druk-lang-v2/main/install.ps1 | iex
+```
+
+There is no macOS build yet (see the release pipeline's own reasoning: this project statically
+links LLVM, which makes an unproven cross-compiled target a real risk). To install by hand
+instead, or on a platform the script doesn't cover:
+
+```sh
+# Linux x86_64, manual
 curl -fsSL -o druk https://github.com/Etoile-Bleu/druk-lang-v2/releases/latest/download/druk-linux-x86_64
 chmod +x druk && sudo mv druk /usr/local/bin/
 ```
 
 ```powershell
-# Windows (PowerShell)
+# Windows, manual
 Invoke-WebRequest -Uri "https://github.com/Etoile-Bleu/druk-lang-v2/releases/latest/download/druk-windows-x86_64.exe" -OutFile druk.exe
 ```
 

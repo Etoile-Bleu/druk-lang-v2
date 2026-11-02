@@ -1,0 +1,5 @@
+# install.sh is fetched raw (curl ... | sh) and run by a POSIX shell; a
+# CRLF line ending on its shebang line would make that fail with "sh\r:
+# No such file or directory" on some systems, so its line endings are
+# pinned to LF regardless of any platform's core.autocrlf setting.
+install.sh text eol=lf
