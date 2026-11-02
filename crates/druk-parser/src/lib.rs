@@ -327,6 +327,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_a_function_with_a_mix_of_typed_and_untyped_params() {
+        let ast = parse_ok("ལས་འགན་ f(གྲངས་ a, b) { སླར་ལོག་ a + b; }");
+        match ast.stmt(ast.top_level[0]) {
+            Stmt::FunctionDecl { params, .. } => {
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].name, "a");
+                assert!(params[0].ty.is_some());
+                assert_eq!(params[1].name, "b");
+                assert!(params[1].ty.is_none());
+            }
+            other => panic!("expected FunctionDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_a_three_clause_for_loop() {
         let ast = parse_ok("རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) { བཀོད་ i; }");
         match ast.stmt(ast.top_level[0]) {
