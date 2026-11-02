@@ -122,14 +122,13 @@ fn builtin_type(name: &str) -> Option<Type> {
             params: vec![unknown()],
             ret: Box::new(Type::Str),
         },
-        "keys" | "values" => Type::Function {
-            params: vec![unknown()],
-            ret: Box::new(Type::Array(Box::new(Type::Unknown))),
-        },
-        "contains" => Type::Function {
-            params: vec![unknown(), unknown()],
-            ret: Box::new(Type::Bool),
-        },
+        // `keys`, `values`, and `contains` are deliberately absent: they
+        // depend on a dictionary type this compiler doesn't have yet.
+        // Giving them a real Type::Function here would make `druk check`
+        // accept a call to them, when `druk run`/`druk build` can't
+        // actually lower one; a program that calls them is reported as
+        // using an undefined name instead, which is both true and what
+        // `check` and `run`/`build` agree on.
         "input" => Type::Function {
             params: vec![],
             ret: Box::new(Type::Str),
@@ -521,6 +520,26 @@ mod tests {
         assert!(diagnostics
             .iter()
             .any(|d| d.message.contains("no variable named")));
+    }
+
+    #[test]
+    fn rejects_keys_values_and_contains_at_check_time_not_just_run_time() {
+        // These three depend on a dictionary type this compiler doesn't
+        // have yet. `check` must reject a call to any of them itself
+        // (as an undefined name), the same way `run`/`build` already do
+        // at IR-lowering time, so a program that passes `check` never
+        // later fails purely because of one of these three names.
+        for call in ["ལྡེ་མིག་(xs);", "གནས་གོང་(xs);", "ནང་འདུས་(xs, ༡);"]
+        {
+            let result = check_source(&format!("གྲངས་[] xs = [༡]; {call}"));
+            let diagnostics = result.expect_err(&format!("expected a diagnostic for {call:?}"));
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("no variable named")),
+                "unexpected diagnostics for {call:?}: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]
