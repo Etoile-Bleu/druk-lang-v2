@@ -214,6 +214,22 @@ impl<'a> Checker<'a> {
                 self.loop_depth -= 1;
                 self.scopes.pop();
             }
+            Stmt::For {
+                init,
+                condition,
+                post,
+                body,
+            } => {
+                self.scopes.push(HashMap::new());
+                self.check_stmt(*init);
+                let condition_type = self.check_expr(*condition);
+                self.expect_type(&condition_type, &Type::Bool, "for condition");
+                self.loop_depth += 1;
+                self.check_block(body);
+                self.loop_depth -= 1;
+                self.check_expr(*post);
+                self.scopes.pop();
+            }
             Stmt::Break => {
                 if self.loop_depth == 0 {
                     self.diagnostics
@@ -467,6 +483,29 @@ mod tests {
     fn allows_recursive_function_calls() {
         let result = check_source(
             "ལས་འགན་ fib(གྲངས་ n) { གལ་སྲིད་ (n <= ༡) སླར་ལོག་ n; སླར་ལོག་ fib(n - ༡) + fib(n - ༢); } བཀོད་ fib(༥);",
+        );
+        assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
+    }
+
+    #[test]
+    fn checks_a_three_clause_for_loop_including_its_post_clause() {
+        let result = check_source("རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) { བཀོད་ i; }");
+        assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
+    }
+
+    #[test]
+    fn reports_a_type_mismatch_in_a_for_loop_condition() {
+        let result = check_source("རེ་རེར་ (གྲངས་ i = ༠; i; i = i + ༡) { བཀོད་ i; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("type mismatch")));
+    }
+
+    #[test]
+    fn allows_break_and_continue_inside_a_for_loop() {
+        let result = check_source(
+            "རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) { ཆད་; } རེ་རེར་ (གྲངས་ j = ༠; j < ༥; j = j + ༡) { མུ་མཐུད་; }",
         );
         assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
     }
