@@ -53,9 +53,13 @@ Ces fonctions sont appelées comme des identifiants normaux.
 | `སྣོན་` | *snon* : "ajouter" | `push()` |
 | `བཏོན་` | *bton* : "extraire, sortir" | `pop()` |
 | `རིགས་` | *rigs* : "type, catégorie" | `typeof()` |
-| `ལྡེ་མིག་` | *lde mig* : "clés" | `keys()` |
-| `གནས་གོང་` | *gnas gong* : "valeurs" | `values()` |
-| `ནང་འདུས་` | *nang 'dus* : "contient" | `contains()` |
+| `ལྡེ་མིག་` | *lde mig* : "clés" | `keys()` (pas encore implémenté) |
+| `གནས་གོང་` | *gnas gong* : "valeurs" | `values()` (pas encore implémenté) |
+| `ནང་འདུས་` | *nang 'dus* : "contient" | `contains()` (pas encore implémenté) |
+
+Ces trois derniers dépendent d'un type dictionnaire que ce compilateur n'a pas encore ; les
+appeler est une erreur de compilation claire (`druk check` les rejette lui-même, pas seulement
+`druk run`/`druk build`), pas un plantage silencieux.
 | `ནང་འཇུག་` | *nang 'jug* : "entrée" | `input()` |
 
 ---
