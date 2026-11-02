@@ -1,6 +1,7 @@
+use inkwell::basic_block::BasicBlock;
 use inkwell::values::FunctionValue;
 
-use druk_diagnostics::Diagnostic;
+use druk_diagnostics::{ice, Diagnostic};
 use druk_ir::{IrExpr, IrStmt};
 
 use super::{unwrap_build, CodeGen};
@@ -46,8 +47,28 @@ impl<'ctx> CodeGen<'ctx> {
                 else_branch,
             } => self.compile_if(cond, then_branch, else_branch, function)?,
             IrStmt::While { cond, body } => self.compile_while(cond, body, function)?,
+            IrStmt::Break => {
+                let (_, break_target) = self.current_loop_targets("break");
+                unwrap_build(self.builder.build_unconditional_branch(break_target));
+            }
+            IrStmt::Continue => {
+                let (continue_target, _) = self.current_loop_targets("continue");
+                unwrap_build(self.builder.build_unconditional_branch(continue_target));
+            }
         }
         Ok(())
+    }
+
+    /// The innermost enclosing loop's `(continue_target, break_target)`
+    /// pair. HIR rejects a `break`/`continue` outside of a loop before
+    /// codegen ever runs (see `druk-hir`'s `loop_depth` check), so an empty
+    /// `loop_stack` here means an earlier pass has a bug, not that the
+    /// user's program is invalid.
+    fn current_loop_targets(&self, what: &str) -> (BasicBlock<'ctx>, BasicBlock<'ctx>) {
+        *self
+            .loop_stack
+            .last()
+            .unwrap_or_else(|| ice!("codegen reached a '{what}' outside of a loop"))
     }
 
     fn compile_if(
@@ -110,9 +131,14 @@ impl<'ctx> CodeGen<'ctx> {
         );
 
         self.builder.position_at_end(body_bb);
+        self.loop_stack.push((cond_bb, end_bb));
         for stmt in body {
-            self.compile_stmt(stmt, function)?;
+            if let Err(diagnostic) = self.compile_stmt(stmt, function) {
+                self.loop_stack.pop();
+                return Err(diagnostic);
+            }
         }
+        self.loop_stack.pop();
         if !self.is_terminated() {
             unwrap_build(self.builder.build_unconditional_branch(cond_bb));
         }

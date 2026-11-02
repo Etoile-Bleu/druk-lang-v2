@@ -31,6 +31,8 @@
 | `མེད་ན་` | *med na* | "sinon, à défaut" | `else` |
 | `ཡང་བསྐྱར་` | *yang bskyar* | "encore, de nouveau" | `while` |
 | `རེ་རེར་` | *re rer* | "un par un, chacun" | `for` |
+| `ཆད་` | *chad* | "interrompre" | `break` |
+| `མུ་མཐུད་` | *mu mthud* | "continuer" | `continue` |
 | `སླར་ལོག་` | *slar log* | "retourner, revenir" | `return` |
 
 ### Entrée / Sortie
@@ -152,6 +154,21 @@ Les nombres multi-chiffres s'écrivent normalement : `༡༢༣` = 123, `༡༠�
 }
 ```
 
+### break et continue
+```
+གྲངས་ ཨང་ = ༠;
+ཡང་བསྐྱར་ (བདེན་པ་) {
+    ཨང་ = ཨང་ + ༡;
+    གལ་སྲིད་ (ཨང་ == ༣) {
+        མུ་མཐུད་;
+    }
+    གལ་སྲིད་ (ཨང་ > ༥) {
+        ཆད་;
+    }
+    བཀོད་ ཨང་;
+}
+```
+
 ### Fonction
 ```
 ལས་འགན་ བསྡོམས་ (གྲངས་ ཀ་, གྲངས་ ཁ་) {
@@ -181,8 +198,6 @@ Ces termes sont réservés pour de futures extensions du langage.
 
 | Concept | Dzongkha proposé | Romanisation | Équivalent |
 |---|---|---|---|
-| `break` | `ཆད་` | *chad* | Interrompre une boucle |
-| `continue` | `མུ་མཐུད་` | *mu mthud* | Passer à l'itération suivante |
 | `import` | `ནང་འདྲེན་` | *nang 'dren* | Importer un module |
 | `export` | `ཕྱིར་འདྲེན་` | *phyir 'dren* | Exporter un symbole |
 | `class` / `struct type` | `རིགས་གཞི་` | *rigs gzhi* | Définir un type |

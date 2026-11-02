@@ -114,6 +114,8 @@ pub enum Stmt {
         condition: ExprId,
         body: Vec<StmtId>,
     },
+    Break,
+    Continue,
     Return(Option<ExprId>),
     FunctionDecl {
         name: String,

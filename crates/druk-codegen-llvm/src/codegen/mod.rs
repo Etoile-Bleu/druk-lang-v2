@@ -82,6 +82,12 @@ pub(crate) struct CodeGen<'ctx> {
     /// function" between top-level calls).
     pub(crate) locals_ptr: Option<PointerValue<'ctx>>,
     pub(crate) locals_ty: Option<ArrayType<'ctx>>,
+    /// One `(continue_target, break_target)` pair per `while` loop currently
+    /// being compiled, innermost last, so a `break`/`continue` nested inside
+    /// `if`s but still lexically inside that loop branches to the right
+    /// block without threading the target through every intermediate
+    /// `compile_stmt` call.
+    pub(crate) loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
 }
 
 impl<'ctx> CodeGen<'ctx> {

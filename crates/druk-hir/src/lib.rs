@@ -62,6 +62,7 @@ pub fn check(ast: Ast) -> Result<Hir, Vec<Diagnostic>> {
             expr_types: vec![Type::Unknown; ast.expr_count()],
             diagnostics: Vec::new(),
             in_function: false,
+            loop_depth: 0,
         };
         checker.check_block(&top_level);
         (checker.expr_types, checker.diagnostics)
@@ -79,6 +80,7 @@ struct Checker<'a> {
     expr_types: Vec<Type>,
     diagnostics: Vec<Diagnostic>,
     in_function: bool,
+    loop_depth: u32,
 }
 
 fn builtin_type(name: &str) -> Option<Type> {
@@ -207,8 +209,22 @@ impl<'a> Checker<'a> {
                 let condition_type = self.check_expr(*condition);
                 self.expect_type(&condition_type, &Type::Bool, "while condition");
                 self.scopes.push(HashMap::new());
+                self.loop_depth += 1;
                 self.check_block(body);
+                self.loop_depth -= 1;
                 self.scopes.pop();
+            }
+            Stmt::Break => {
+                if self.loop_depth == 0 {
+                    self.diagnostics
+                        .push(Diagnostic::error("break outside of a loop"));
+                }
+            }
+            Stmt::Continue => {
+                if self.loop_depth == 0 {
+                    self.diagnostics
+                        .push(Diagnostic::error("continue outside of a loop"));
+                }
             }
             Stmt::Return(value) => {
                 if !self.in_function {
@@ -227,11 +243,14 @@ impl<'a> Checker<'a> {
                 self.scopes.push(HashMap::new());
                 let was_in_function = self.in_function;
                 self.in_function = true;
+                let outer_loop_depth = self.loop_depth;
+                self.loop_depth = 0;
                 for param in params {
                     let ty = param.ty.map(Type::from_annotation).unwrap_or(Type::Unknown);
                     self.declare(param.name.clone(), ty);
                 }
                 self.check_block(body);
+                self.loop_depth = outer_loop_depth;
                 self.in_function = was_in_function;
                 self.scopes.pop();
             }
@@ -450,6 +469,45 @@ mod tests {
             "ལས་འགན་ fib(གྲངས་ n) { གལ་སྲིད་ (n <= ༡) སླར་ལོག་ n; སླར་ལོག་ fib(n - ༡) + fib(n - ༢); } བཀོད་ fib(༥);",
         );
         assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
+    }
+
+    #[test]
+    fn allows_break_and_continue_inside_a_while_loop() {
+        let result = check_source("ཡང་བསྐྱར་ (བདེན་པ་) { ཆད་; } ཡང་བསྐྱར་ (བདེན་པ་) { མུ་མཐུད་; }");
+        assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
+    }
+
+    #[test]
+    fn reports_break_outside_a_loop() {
+        let result = check_source("ཆད་;");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("break outside")));
+    }
+
+    #[test]
+    fn reports_continue_outside_a_loop() {
+        let result = check_source("མུ་མཐུད་;");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("continue outside")));
+    }
+
+    #[test]
+    fn a_function_body_does_not_inherit_its_declaration_sites_loop_depth() {
+        // `f`'s own body has no loop of its own, so its `break` is invalid
+        // even though `f` is declared lexically inside a while loop. The
+        // outer `break` (inside the while loop, outside `f`) stays valid.
+        let result = check_source("ཡང་བསྐྱར་ (བདེན་པ་) { ལས་འགན་ f() { ཆད་; } ཆད་; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "unexpected diagnostics: {diagnostics:?}"
+        );
+        assert!(diagnostics[0].message.contains("break outside"));
     }
 
     #[test]

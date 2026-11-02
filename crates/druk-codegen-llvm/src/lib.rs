@@ -59,6 +59,7 @@ pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
         functions,
         locals_ptr: None,
         locals_ty: None,
+        loop_stack: Vec::new(),
     };
 
     for (index, function) in module.functions.iter().enumerate() {
@@ -153,6 +154,7 @@ pub fn compile_to_object(module: &IrModule, object_path: &Path) -> Result<(), Di
         functions,
         locals_ptr: None,
         locals_ty: None,
+        loop_stack: Vec::new(),
     };
 
     for (index, function) in module.functions.iter().enumerate() {
