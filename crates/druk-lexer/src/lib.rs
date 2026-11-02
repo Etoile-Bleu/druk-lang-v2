@@ -3,6 +3,18 @@ use logos::Logos;
 
 #[derive(Logos, Debug, Clone, Copy, PartialEq, Eq)]
 #[logos(skip r"[ \t\r\n]+")]
+// A single-line comment runs to the end of the line; a block comment runs
+// to the first `*/`, using the standard "not a star, or a star not
+// followed by a slash" regex so `** /` and similar don't end it early.
+// Both are skipped the same way whitespace is: logos computes every
+// later span from byte offsets, so a comment spanning several lines
+// (Tibetan script included) never shifts a token after it out of place.
+// An unterminated block comment is a known, deliberately out-of-scope
+// edge case here: `/` and `*` still lex as their own ordinary operator
+// tokens, producing a confusing downstream parse error rather than a
+// clear "unterminated comment" diagnostic.
+#[logos(skip r"//[^\n]*")]
+#[logos(skip r"/\*([^*]|\*[^/])*\*/")]
 pub enum TokenKind {
     #[token("ལས་འགན་")]
     KwFunction,
@@ -280,6 +292,67 @@ mod tests {
                 TokenKind::RBrace,
             ]
         );
+    }
+
+    #[test]
+    fn skips_a_single_line_comment_without_shifting_later_spans() {
+        let source = "གྲངས་ x = ༡; // x should be a number\nབཀོད་ x;";
+        let (tokens, diagnostics) = tokenize(source);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected diagnostics: {diagnostics:?}"
+        );
+        let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::KwNumber,
+                TokenKind::Ident,
+                TokenKind::Eq,
+                TokenKind::Integer,
+                TokenKind::Semi,
+                TokenKind::KwPrint,
+                TokenKind::Ident,
+                TokenKind::Semi,
+            ]
+        );
+        // The token right after the comment must start exactly where it's
+        // written in the source, not somewhere inside the skipped text.
+        assert_eq!(tokens[5].text, "བཀོད་");
+    }
+
+    #[test]
+    fn skips_a_block_comment_spanning_a_tibetan_script_line() {
+        let source = "/* བདེ་ལེགས།\n   multi-line */ གྲངས་ x = ༡;";
+        let (tokens, diagnostics) = tokenize(source);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected diagnostics: {diagnostics:?}"
+        );
+        let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::KwNumber,
+                TokenKind::Ident,
+                TokenKind::Eq,
+                TokenKind::Integer,
+                TokenKind::Semi,
+            ]
+        );
+        assert_eq!(tokens[0].text, "གྲངས་");
+    }
+
+    #[test]
+    fn a_block_comment_containing_a_lone_star_does_not_end_early() {
+        let source = "/* this * looks tricky */ ༡";
+        let (tokens, diagnostics) = tokenize(source);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected diagnostics: {diagnostics:?}"
+        );
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Integer);
     }
 
     #[test]
