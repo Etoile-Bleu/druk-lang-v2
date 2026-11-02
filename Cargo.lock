@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "druk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "druk-driver",
@@ -173,11 +173,11 @@ dependencies = [
 
 [[package]]
 name = "druk-ast"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "druk-codegen-llvm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-diagnostics",
  "druk-hir",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "druk-diagnostics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ariadne",
  "tracing",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "druk-driver"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-codegen-llvm",
  "druk-diagnostics",
@@ -209,14 +209,14 @@ dependencies = [
 
 [[package]]
 name = "druk-gc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-diagnostics",
 ]
 
 [[package]]
 name = "druk-hir"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-ast",
  "druk-diagnostics",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "druk-ir"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-ast",
  "druk-diagnostics",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "druk-lexer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-diagnostics",
  "logos",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "druk-parser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-ast",
  "druk-diagnostics",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "druk-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "druk-diagnostics",
  "druk-gc",
@@ -372,9 +372,9 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "llvm-sys"
-version = "221.1.1"
+version = "221.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d19cbc1fbc2f93b1508959fe2c92a09b6d760ffbea9a89be30fed6327f6c786"
+checksum = "2e94aa5b03c11c1ba1815bb79083ac0a3490b7b20cd7e2654502c0c39987ff14"
 dependencies = [
  "anyhow",
  "cc",
@@ -386,9 +386,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "logos"
