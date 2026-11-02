@@ -114,6 +114,12 @@ pub enum Stmt {
         condition: ExprId,
         body: Vec<StmtId>,
     },
+    For {
+        init: StmtId,
+        condition: ExprId,
+        post: ExprId,
+        body: Vec<StmtId>,
+    },
     Break,
     Continue,
     Return(Option<ExprId>),
