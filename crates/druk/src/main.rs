@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use druk_driver::DriverError;
 
 #[derive(Parser)]
-#[command(name = "druk", about = "The Druk language compiler")]
+#[command(name = "druk", about = "The Druk language compiler", version)]
 struct Cli {
     /// Enable verbose debug logging (overridden by RUST_LOG if set).
     #[arg(long, global = true)]
