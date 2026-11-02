@@ -55,6 +55,27 @@ impl<'a> Lowerer<'a> {
                     body: body_ir,
                 }
             }
+            Stmt::For {
+                init,
+                condition,
+                post,
+                body,
+            } => {
+                self.push_block_scope();
+                let init_ir = Box::new(self.lower_stmt(*init));
+                let cond = self.lower_expr(*condition);
+                self.push_block_scope();
+                let body_ir = self.lower_block(body);
+                self.pop_block_scope();
+                let post_ir = self.lower_expr(*post);
+                self.pop_block_scope();
+                IrStmt::For {
+                    init: init_ir,
+                    cond,
+                    post: post_ir,
+                    body: body_ir,
+                }
+            }
             Stmt::Break => IrStmt::Break,
             Stmt::Continue => IrStmt::Continue,
             Stmt::Return(value) => IrStmt::Return(value.map(|value_id| self.lower_expr(value_id))),
