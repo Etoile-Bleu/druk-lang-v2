@@ -1,0 +1,5 @@
+---
+source: crates/druk/tests/examples.rs
+expression: stdout
+---
+Very Good
