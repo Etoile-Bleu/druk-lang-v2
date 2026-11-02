@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "druk"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "druk-driver",
@@ -173,11 +173,11 @@ dependencies = [
 
 [[package]]
 name = "druk-ast"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "druk-codegen-llvm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-diagnostics",
  "druk-hir",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "druk-diagnostics"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ariadne",
  "tracing",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "druk-driver"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-codegen-llvm",
  "druk-diagnostics",
@@ -209,14 +209,14 @@ dependencies = [
 
 [[package]]
 name = "druk-gc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-diagnostics",
 ]
 
 [[package]]
 name = "druk-hir"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-ast",
  "druk-diagnostics",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "druk-ir"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-ast",
  "druk-diagnostics",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "druk-lexer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-diagnostics",
  "logos",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "druk-parser"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-ast",
  "druk-diagnostics",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "druk-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "druk-diagnostics",
  "druk-gc",
