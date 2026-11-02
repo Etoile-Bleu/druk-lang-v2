@@ -4,6 +4,8 @@
 //! that cannot be resolved or does not type-check instead of stopping at the
 //! first problem.
 
+mod infer;
+
 use std::collections::HashMap;
 
 use druk_ast::{
@@ -285,7 +287,18 @@ impl<'a> Checker<'a> {
                 let outer_loop_depth = self.loop_depth;
                 self.loop_depth = 0;
                 for param in params {
-                    let ty = param.ty.map(Type::from_annotation).unwrap_or(Type::Unknown);
+                    let ty = match param.ty {
+                        Some(annotation) => Type::from_annotation(annotation),
+                        None => self.infer_param_type(body, &param.name).unwrap_or_else(|| {
+                            self.diagnostics.push(Diagnostic::error(format!(
+                                "couldn't figure out the type of parameter '{p}' from how it's used; \
+                                 add a type keyword, like གྲངས་ {p} (number), ཡིག་འབྲུ་ {p} (text), \
+                                 or བདེན་རྫུན་ {p} (true/false)",
+                                p = param.name
+                            )));
+                            Type::Unknown
+                        }),
+                    };
                     self.declare(param.name.clone(), ty);
                 }
                 self.check_block(body);
@@ -612,5 +625,68 @@ mod tests {
         let result = check_source("ལས་འགན་ square(གྲངས་ n) { སླར་ལོག་ n * n; } བཀོད་ square(༡, ༢);");
         let diagnostics = result.expect_err("expected a diagnostic");
         assert!(diagnostics.iter().any(|d| d.message.contains("argument")));
+    }
+
+    #[test]
+    fn infers_untyped_parameters_from_arithmetic_and_type_checks_cleanly() {
+        let result = check_source("ལས་འགན་ sum(a, b) { སླར་ལོག་ a + b; } བཀོད་ sum(༡, ༢);");
+        assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
+    }
+
+    // The following four tests each prove the inferred type actually
+    // stuck, rather than quietly falling back to Unknown: they shadow-
+    // assign a literal of a conflicting type to the same parameter.
+    // `Expr::Assign` contributes no evidence of its own (see infer.rs),
+    // so this can't be mistaken for the inference's own evidence; it
+    // only exercises the ordinary type checker against whatever type
+    // inference already settled on.
+
+    #[test]
+    fn an_inferred_number_parameter_rejects_a_bool_assigned_to_it() {
+        let result = check_source("ལས་འགན་ f(a) { a + ༡; a = བདེན་པ་; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
+    }
+
+    #[test]
+    fn an_inferred_bool_parameter_rejects_a_number_assigned_to_it() {
+        let result = check_source("ལས་འགན་ f(flag) { གལ་སྲིད་ (flag) { བཀོད་ ༡; } flag = ༥; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
+    }
+
+    #[test]
+    fn an_inferred_array_parameter_rejects_a_number_assigned_to_it() {
+        let result = check_source("ལས་འགན་ f(xs) { སླར་ལོག་ xs[༠]; xs = ༥; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
+    }
+
+    #[test]
+    fn an_inferred_function_parameter_rejects_a_number_assigned_to_it() {
+        let result = check_source("ལས་འགན་ f(op) { op(༡); op = ༥; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
+    }
+
+    #[test]
+    fn reports_a_diagnostic_for_an_unused_untyped_parameter() {
+        let result = check_source("ལས་འགན་ f(x) { སླར་ལོག་ ༡; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("couldn't figure out the type")));
+    }
+
+    #[test]
+    fn reports_a_diagnostic_for_conflicting_evidence() {
+        // `x` is used both as a number (arithmetic) and as a boolean (an
+        // if condition) in the same body: no single type explains both,
+        // so this is reported rather than guessed.
+        let result = check_source("ལས་འགན་ f(x) { x + ༡; གལ་སྲིད་ (x) { བཀོད་ ༡; } }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("couldn't figure out the type")));
     }
 }
