@@ -20,6 +20,7 @@
 
 - [What it is](#what-it-is)
 - [Example](#example)
+- [Installing a prebuilt binary](#installing-a-prebuilt-binary)
 - [Quick start](#quick-start)
 - [Workspace layout](#workspace-layout)
 - [Status](#status)
@@ -62,6 +63,27 @@ clean stacked letters in your editor or terminal, see
 [docs/dzongkha_input_setup_en.md](docs/dzongkha_input_setup_en.md) (also available [in
 French](docs/dzongkha_input_setup.md)) for a font and keyboard/IME setup guide covering Windows,
 macOS, and Linux.
+
+## Installing a prebuilt binary
+
+Every [release](https://github.com/Etoile-Bleu/druk-lang-v2/releases) attaches a Linux and a
+Windows binary, no local LLVM or Rust toolchain required:
+
+```sh
+# Linux x86_64
+curl -fsSL -o druk https://github.com/Etoile-Bleu/druk-lang-v2/releases/latest/download/druk-linux-x86_64
+chmod +x druk && sudo mv druk /usr/local/bin/
+```
+
+```powershell
+# Windows (PowerShell)
+Invoke-WebRequest -Uri "https://github.com/Etoile-Bleu/druk-lang-v2/releases/latest/download/druk-windows-x86_64.exe" -OutFile druk.exe
+```
+
+This covers `druk run` (the LLVM JIT) completely: LLVM is statically linked into the binary.
+`druk build` (ahead-of-time native compilation) additionally shells out to `llc` and `rustc` at
+run time, so it still needs an LLVM 22 install and a Rust toolchain on `PATH` even with a
+downloaded binary; see [Building](#building) below for that setup.
 
 ## Quick start
 

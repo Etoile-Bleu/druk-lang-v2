@@ -1,0 +1,216 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Called explicitly by release.yml after pushing the tag (GITHUB_TOKEN
+  # pushes don't trigger other workflows' own push triggers).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag to release, e.g. v0.2.0 (leave empty when run on a tag ref)"
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  LLVM_VERSION: 22.1.7
+  # Normalize to "vX.Y.Z" whether this ran from a tag push (github.ref_name
+  # is already "vX.Y.Z") or a manual dispatch where the input might be
+  # typed with or without the leading "v".
+  RELEASE_TAG: ${{ inputs.version != '' && (startsWith(inputs.version, 'v') && inputs.version || format('v{0}', inputs.version)) || github.ref_name }}
+
+jobs:
+  # Only two targets, matching the two platforms CI already builds and
+  # tests on (ubuntu-latest, windows-latest). A third platform (macOS,
+  # musl, or any cross-compiled target) is deliberately out of scope here:
+  # this project links against LLVM's own prebuilt libraries, which makes
+  # cross-compiling to an untested target a real risk, not a flag flip.
+  # Add one only once a CI job proves the LLVM setup works there first.
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: druk-linux-x86_64
+            binary: druk
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: druk-windows-x86_64
+            binary: druk.exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - uses: ./.github/actions/setup-llvm
+        with:
+          llvm-version: ${{ env.LLVM_VERSION }}
+
+      - name: Build
+        run: cargo build --release -p druk --target ${{ matrix.target }}
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Collect binaries and generate checksums
+        run: |
+          mkdir -p release
+          cp dist/druk-linux-x86_64/druk-linux-x86_64 release/
+          cp dist/druk-windows-x86_64/druk-windows-x86_64 release/druk-windows-x86_64.exe
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Build release body
+        run: |
+          git fetch --tags
+
+          # Closest previous semver tag, excluding the one being released,
+          # so the changelog only covers commits since the last release
+          # rather than the whole repo history.
+          PREV=$(git tag --sort=-version:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -v "^${{ env.RELEASE_TAG }}$" \
+            | head -1)
+
+          REPO="${{ github.repository }}"
+          TAG="${{ env.RELEASE_TAG }}"
+
+          cat > /tmp/release_body.md << EOF
+          A Dzongkha-script compiler for Bhutan's national ICT curriculum.
+
+          ### Install
+
+          \`\`\`bash
+          # Linux x86_64
+          curl -fsSL -o druk https://github.com/${REPO}/releases/download/${TAG}/druk-linux-x86_64
+          chmod +x druk && sudo mv druk /usr/local/bin/
+          \`\`\`
+
+          \`\`\`powershell
+          # Windows (PowerShell)
+          Invoke-WebRequest -Uri "https://github.com/${REPO}/releases/download/${TAG}/druk-windows-x86_64.exe" -OutFile druk.exe
+          \`\`\`
+
+          ### Verify checksums
+
+          \`\`\`bash
+          sha256sum -c SHA256SUMS.txt
+          \`\`\`
+
+          ### What this binary does and does not need
+
+          \`druk run\` (the LLVM JIT) is fully self-contained: LLVM is statically
+          linked in, nothing else to install. \`druk build\` (ahead-of-time native
+          compilation) additionally shells out to \`llc\` and \`rustc\` at run time,
+          so it needs an LLVM 22 install and a Rust toolchain on \`PATH\` -- see
+          the Building section of the README. This binary alone is enough for
+          \`druk run\`; it is not enough on its own for \`druk build\`.
+
+          EOF
+
+          if [ -n "$PREV" ]; then
+            gh api "repos/${REPO}/releases/generate-notes" \
+              -f tag_name="${TAG}" \
+              -f previous_tag_name="${PREV}" \
+              --jq '.body' >> /tmp/release_body.md
+          else
+            echo "## What's Changed" >> /tmp/release_body.md
+            echo "First release." >> /tmp/release_body.md
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Druk ${{ env.RELEASE_TAG }}"
+          body_path: /tmp/release_body.md
+          files: release/*
+          fail_on_unmatched_files: true
+
+  smoke-test:
+    name: Smoke test (Linux, JIT + native)
+    runs-on: ubuntu-latest
+    needs: github-release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: druk-linux-x86_64
+          path: bin/
+
+      - name: --version works
+        run: |
+          chmod +x bin/druk-linux-x86_64
+          bin/druk-linux-x86_64 --version
+
+      - name: JIT (druk run) matches the expected bundled-example output
+        run: |
+          output=$(bin/druk-linux-x86_64 run examples/01_hello.druk)
+          echo "$output"
+          echo "$output" | grep -q "Hello, Druk Lang!"
+
+      - uses: dtolnay/rust-toolchain@stable
+        # druk build links the final executable by shelling out to rustc.
+
+      - uses: ./.github/actions/setup-llvm
+        with:
+          llvm-version: ${{ env.LLVM_VERSION }}
+
+      - name: Native (druk build) produces the same output as the JIT
+        # Confirms the released binary's druk build subcommand actually
+        # works end to end (compile_to_object + link against
+        # druk-runtime), not just that the binary starts.
+        run: |
+          jit_output=$(bin/druk-linux-x86_64 run examples/01_hello.druk)
+          bin/druk-linux-x86_64 build examples/01_hello.druk -o /tmp/hello_native
+          native_output=$(/tmp/hello_native)
+          echo "jit: $jit_output"
+          echo "native: $native_output"
+          [ "$jit_output" = "$native_output" ]
