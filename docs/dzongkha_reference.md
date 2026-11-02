@@ -241,7 +241,17 @@ Ces termes sont réservés pour de futures extensions du langage.
 | `,` | Séparateur d'éléments |
 | `:` | Séparateur clé-valeur (struct) |
 | `.` | Accès membre |
-| `//` | Commentaire ligne |
+| `//` | Commentaire de ligne (va jusqu'à la fin de la ligne) |
+| `/* */` | Commentaire multi-lignes (peut contenir du texte dzongkha sur plusieurs lignes) |
+
+Un commentaire est entièrement ignoré par le compilateur, qu'il tienne sur une ligne ou plusieurs,
+texte dzongkha inclus :
+```
+གྲངས་ ཨང་ = ༡༠; // nombre de départ
+/* ceci est un commentaire
+   multi-lignes */
+བཀོད་ ཨང་;
+```
 
 ---
 
