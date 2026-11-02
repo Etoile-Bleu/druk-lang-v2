@@ -214,4 +214,97 @@ mod tests {
 
         let _ = std::fs::remove_file(&output_path);
     }
+
+    #[test]
+    fn a_for_loops_continue_still_runs_the_post_clause() {
+        // `for`'s `continue` branches to its own `post` block rather than
+        // straight to `cond` (see `druk-codegen-llvm`'s `compile_for`): the
+        // one way that could regress is `continue` targeting `cond`
+        // directly, which would skip the increment and infinite-loop
+        // forever on `i == 2`. This source makes that failure mode visible
+        // as a hang rather than a silently wrong answer, which is the
+        // sharper signal for exactly this bug.
+        let source = "\
+            རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) {\n\
+                གལ་སྲིད་ (i == ༢) {\n\
+                    མུ་མཐུད་;\n\
+                }\n\
+                གལ་སྲིད་ (i == ༤) {\n\
+                    ཆད་;\n\
+                }\n\
+                བཀོད་ i;\n\
+            }\n\
+        ";
+
+        let mut output_path = std::env::temp_dir();
+        output_path.push(format!(
+            "druk_for_continue_post_test_{}.exe",
+            std::process::id()
+        ));
+
+        let build_result = build_source(source, &output_path);
+        assert!(
+            build_result.is_ok(),
+            "failed to build a standalone executable: {build_result:?}"
+        );
+
+        let run_output = std::process::Command::new(&output_path)
+            .output()
+            .expect("the built executable should run");
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        let expected = "0\n1\n3\n";
+        assert_eq!(
+            stdout.replace("\r\n", "\n"),
+            expected,
+            "continue inside a for loop did not run the post clause before the next condition check"
+        );
+
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    #[test]
+    fn a_for_loop_nested_inside_a_while_loop_scopes_break_and_continue_correctly() {
+        // The loop-target stack in druk-codegen-llvm is homogeneous
+        // ((BasicBlock, BasicBlock) pairs) regardless of which kind of loop
+        // pushed it, so mixing loop kinds is the case most likely to expose
+        // a scoping bug the same-kind nested test above would not catch.
+        let source = "\
+            གྲངས་ i = ༠;\n\
+            ཡང་བསྐྱར་ (i < ༢) {\n\
+                i = i + ༡;\n\
+                རེ་རེར་ (གྲངས་ j = ༠; j < ༥; j = j + ༡) {\n\
+                    གལ་སྲིད་ (j == ༢) {\n\
+                        མུ་མཐུད་;\n\
+                    }\n\
+                    གལ་སྲིད་ (j == ༤) {\n\
+                        ཆད་;\n\
+                    }\n\
+                    བཀོད་ j;\n\
+                }\n\
+                བཀོད་ i;\n\
+            }\n\
+        ";
+
+        let mut output_path = std::env::temp_dir();
+        output_path.push(format!("druk_for_in_while_test_{}.exe", std::process::id()));
+
+        let build_result = build_source(source, &output_path);
+        assert!(
+            build_result.is_ok(),
+            "failed to build a standalone executable: {build_result:?}"
+        );
+
+        let run_output = std::process::Command::new(&output_path)
+            .output()
+            .expect("the built executable should run");
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        let expected = "0\n1\n3\n1\n0\n1\n3\n2\n";
+        assert_eq!(
+            stdout.replace("\r\n", "\n"),
+            expected,
+            "break/continue did not stay scoped correctly across mixed while/for nesting"
+        );
+
+        let _ = std::fs::remove_file(&output_path);
+    }
 }

@@ -64,6 +64,18 @@ pub enum IrStmt {
         cond: IrExpr,
         body: Vec<IrStmt>,
     },
+    /// Kept as its own IR shape rather than desugared to `While` plus a
+    /// trailing `post` statement appended to `body`: `continue` inside a
+    /// `for` loop must still run `post` before the next `cond` check, which
+    /// needs its own codegen target distinct from `While`'s (whose
+    /// `continue` branches straight to `cond`). See `druk-codegen-llvm`'s
+    /// `compile_for`.
+    For {
+        init: Box<IrStmt>,
+        cond: IrExpr,
+        post: IrExpr,
+        body: Vec<IrStmt>,
+    },
     Break,
     Continue,
     Return(Option<IrExpr>),
@@ -379,6 +391,29 @@ mod tests {
         match &module.main.body[2] {
             IrStmt::Expr(IrExpr::FieldSet(_, field, _)) => assert_eq!(field, "y"),
             other => panic!("expected Expr(FieldSet), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_a_for_loop_to_its_own_init_cond_post_and_body() {
+        let module =
+            lower_source("རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) { བཀོད་ i; }").expect("should lower");
+        match &module.main.body[0] {
+            IrStmt::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                assert!(matches!(
+                    init.as_ref(),
+                    IrStmt::Expr(IrExpr::SetLocal(0, _))
+                ));
+                assert!(matches!(cond, IrExpr::Binary(BinOp::Lt, _, _)));
+                assert!(matches!(post, IrExpr::SetLocal(0, _)));
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("expected For statement, got {other:?}"),
         }
     }
 

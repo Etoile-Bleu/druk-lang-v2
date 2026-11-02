@@ -47,6 +47,12 @@ impl<'ctx> CodeGen<'ctx> {
                 else_branch,
             } => self.compile_if(cond, then_branch, else_branch, function)?,
             IrStmt::While { cond, body } => self.compile_while(cond, body, function)?,
+            IrStmt::For {
+                init,
+                cond,
+                post,
+                body,
+            } => self.compile_for(init, cond, post, body, function)?,
             IrStmt::Break => {
                 let (_, break_target) = self.current_loop_targets("break");
                 unwrap_build(self.builder.build_unconditional_branch(break_target));
@@ -142,6 +148,58 @@ impl<'ctx> CodeGen<'ctx> {
         if !self.is_terminated() {
             unwrap_build(self.builder.build_unconditional_branch(cond_bb));
         }
+
+        self.builder.position_at_end(end_bb);
+        Ok(())
+    }
+
+    /// `init` compiles inline, in whatever block the builder is already
+    /// positioned in, before the loop structure proper begins. `continue`
+    /// inside `body` targets `post_bb`, not `cond_bb`: a `for` loop's
+    /// increment must still run on a `continue`'d iteration, unlike
+    /// `while`, which has no separate post-body step for `continue` to
+    /// skip over.
+    fn compile_for(
+        &mut self,
+        init: &IrStmt,
+        cond: &IrExpr,
+        post: &IrExpr,
+        body: &[IrStmt],
+        function: FunctionValue<'ctx>,
+    ) -> Result<(), Diagnostic> {
+        self.compile_stmt(init, function)?;
+
+        let cond_bb = self.context.append_basic_block(function, "for.cond");
+        let body_bb = self.context.append_basic_block(function, "for.body");
+        let post_bb = self.context.append_basic_block(function, "for.post");
+        let end_bb = self.context.append_basic_block(function, "for.end");
+
+        unwrap_build(self.builder.build_unconditional_branch(cond_bb));
+
+        self.builder.position_at_end(cond_bb);
+        let cond_value = self.compile_expr(cond, function)?;
+        let cond_bool = self.is_truthy(function, cond_value);
+        unwrap_build(
+            self.builder
+                .build_conditional_branch(cond_bool, body_bb, end_bb),
+        );
+
+        self.builder.position_at_end(body_bb);
+        self.loop_stack.push((post_bb, end_bb));
+        for stmt in body {
+            if let Err(diagnostic) = self.compile_stmt(stmt, function) {
+                self.loop_stack.pop();
+                return Err(diagnostic);
+            }
+        }
+        self.loop_stack.pop();
+        if !self.is_terminated() {
+            unwrap_build(self.builder.build_unconditional_branch(post_bb));
+        }
+
+        self.builder.position_at_end(post_bb);
+        self.compile_expr(post, function)?;
+        unwrap_build(self.builder.build_unconditional_branch(cond_bb));
 
         self.builder.position_at_end(end_bb);
         Ok(())
