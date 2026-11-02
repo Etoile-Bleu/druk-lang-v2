@@ -30,6 +30,26 @@ pub enum Type {
     Unknown,
 }
 
+impl std::fmt::Display for Type {
+    /// A plain-language name for a type, used in every diagnostic a
+    /// student sees: never the derived `Debug` output (`Array(Number)`,
+    /// `Function { params: [...], ret: ... }`), which leaks this
+    /// compiler's own internal enum shape instead of describing the kind
+    /// of value in words a beginner already has.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Number => write!(f, "a number"),
+            Type::Str => write!(f, "text"),
+            Type::Bool => write!(f, "true or false"),
+            Type::Nil => write!(f, "nothing"),
+            Type::Array(_) => write!(f, "a list"),
+            Type::Struct => write!(f, "a struct"),
+            Type::Function { .. } => write!(f, "a function"),
+            Type::Unknown => write!(f, "something of an unclear type"),
+        }
+    }
+}
+
 impl Type {
     fn from_annotation(ty: TypeAnnotation) -> Self {
         let base = match ty.base {
@@ -142,7 +162,7 @@ impl<'a> Checker<'a> {
             return;
         }
         self.diagnostics.push(Diagnostic::error(format!(
-            "type mismatch in {context}: expected {expected:?}, found {actual:?}"
+            "{context} needs {expected}, but this is {actual}"
         )));
     }
 
@@ -232,20 +252,23 @@ impl<'a> Checker<'a> {
             }
             Stmt::Break => {
                 if self.loop_depth == 0 {
-                    self.diagnostics
-                        .push(Diagnostic::error("break outside of a loop"));
+                    self.diagnostics.push(Diagnostic::error(
+                        "break can only be used inside a loop (while or for)",
+                    ));
                 }
             }
             Stmt::Continue => {
                 if self.loop_depth == 0 {
-                    self.diagnostics
-                        .push(Diagnostic::error("continue outside of a loop"));
+                    self.diagnostics.push(Diagnostic::error(
+                        "continue can only be used inside a loop (while or for)",
+                    ));
                 }
             }
             Stmt::Return(value) => {
                 if !self.in_function {
-                    self.diagnostics
-                        .push(Diagnostic::error("return outside of a function"));
+                    self.diagnostics.push(Diagnostic::error(
+                        "return can only be used inside a function",
+                    ));
                 }
                 if let Some(value_id) = value {
                     self.check_expr(*value_id);
@@ -275,7 +298,7 @@ impl<'a> Checker<'a> {
                 for arm in arms {
                     if let Pattern::Literal(literal) = &arm.pattern {
                         let pattern_type = literal_type(literal);
-                        self.expect_type(&pattern_type, &subject_type, "match pattern");
+                        self.expect_type(&pattern_type, &subject_type, "match case");
                     }
                     self.check_stmt(arm.body);
                 }
@@ -288,19 +311,20 @@ impl<'a> Checker<'a> {
         let ty = match ast.expr(id) {
             Expr::Literal(literal) => literal_type(literal),
             Expr::Ident(name) => self.lookup(name).unwrap_or_else(|| {
-                self.diagnostics
-                    .push(Diagnostic::error(format!("undefined variable '{name}'")));
+                self.diagnostics.push(Diagnostic::error(format!(
+                    "there is no variable named '{name}' here"
+                )));
                 Type::Unknown
             }),
             Expr::Unary { op, operand } => {
                 let operand_type = self.check_expr(*operand);
                 match op {
                     UnOp::Negate => {
-                        self.expect_type(&operand_type, &Type::Number, "unary '-'");
+                        self.expect_type(&operand_type, &Type::Number, "the '-' before a value");
                         Type::Number
                     }
                     UnOp::Not => {
-                        self.expect_type(&operand_type, &Type::Bool, "unary '!'");
+                        self.expect_type(&operand_type, &Type::Bool, "the '!' before a value");
                         Type::Bool
                     }
                 }
@@ -323,7 +347,7 @@ impl<'a> Checker<'a> {
                     Type::Function { params, ret } => {
                         if params.len() != arg_types.len() {
                             self.diagnostics.push(Diagnostic::error(format!(
-                                "expected {} argument(s), found {}",
+                                "this function expects {} argument(s), but {} were given",
                                 params.len(),
                                 arg_types.len()
                             )));
@@ -333,7 +357,7 @@ impl<'a> Checker<'a> {
                     Type::Unknown => Type::Unknown,
                     other => {
                         self.diagnostics.push(Diagnostic::error(format!(
-                            "cannot call a value of type {other:?}"
+                            "this is {other}, not a function, so it can't be called with (...)"
                         )));
                         Type::Unknown
                     }
@@ -342,13 +366,13 @@ impl<'a> Checker<'a> {
             Expr::Index { object, index } => {
                 let object_type = self.check_expr(*object);
                 let index_type = self.check_expr(*index);
-                self.expect_type(&index_type, &Type::Number, "array index");
+                self.expect_type(&index_type, &Type::Number, "list index");
                 match object_type {
                     Type::Array(element) => *element,
                     Type::Unknown => Type::Unknown,
                     other => {
                         self.diagnostics.push(Diagnostic::error(format!(
-                            "cannot index a value of type {other:?}"
+                            "this is {other}, not a list, so it can't use [...]"
                         )));
                         Type::Unknown
                     }
@@ -453,21 +477,57 @@ mod tests {
     }
 
     #[test]
+    fn type_display_never_leaks_the_debug_shape() {
+        // Every one of these must read as plain English, never as this
+        // compiler's own enum shape (no "Array(", "Function {", or any
+        // other Rust-syntax fragment a beginner has no reason to know).
+        assert_eq!(Type::Number.to_string(), "a number");
+        assert_eq!(Type::Str.to_string(), "text");
+        assert_eq!(Type::Bool.to_string(), "true or false");
+        assert_eq!(Type::Array(Box::new(Type::Number)).to_string(), "a list");
+        assert_eq!(
+            Type::Function {
+                params: vec![Type::Number],
+                ret: Box::new(Type::Bool)
+            }
+            .to_string(),
+            "a function"
+        );
+        for rendered in [
+            Type::Number.to_string(),
+            Type::Str.to_string(),
+            Type::Bool.to_string(),
+            Type::Nil.to_string(),
+            Type::Array(Box::new(Type::Number)).to_string(),
+            Type::Struct.to_string(),
+            Type::Function {
+                params: vec![],
+                ret: Box::new(Type::Nil),
+            }
+            .to_string(),
+            Type::Unknown.to_string(),
+        ] {
+            assert!(
+                !rendered.contains('(') && !rendered.contains('{'),
+                "type rendering leaked Rust syntax: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
     fn reports_an_undefined_variable() {
         let result = check_source("བཀོད་ missing;");
         let diagnostics = result.expect_err("expected a diagnostic");
         assert!(diagnostics
             .iter()
-            .any(|d| d.message.contains("undefined variable")));
+            .any(|d| d.message.contains("no variable named")));
     }
 
     #[test]
     fn reports_a_type_mismatch_in_arithmetic() {
         let result = check_source("བདེན་རྫུན་ flag = བདེན་པ་; བཀོད་ flag + ༡;");
         let diagnostics = result.expect_err("expected a diagnostic");
-        assert!(diagnostics
-            .iter()
-            .any(|d| d.message.contains("type mismatch")));
+        assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
     }
 
     #[test]
@@ -476,7 +536,7 @@ mod tests {
         let diagnostics = result.expect_err("expected a diagnostic");
         assert!(diagnostics
             .iter()
-            .any(|d| d.message.contains("return outside")));
+            .any(|d| d.message.contains("return can only be used")));
     }
 
     #[test]
@@ -497,9 +557,7 @@ mod tests {
     fn reports_a_type_mismatch_in_a_for_loop_condition() {
         let result = check_source("རེ་རེར་ (གྲངས་ i = ༠; i; i = i + ༡) { བཀོད་ i; }");
         let diagnostics = result.expect_err("expected a diagnostic");
-        assert!(diagnostics
-            .iter()
-            .any(|d| d.message.contains("type mismatch")));
+        assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
     }
 
     #[test]
@@ -522,7 +580,7 @@ mod tests {
         let diagnostics = result.expect_err("expected a diagnostic");
         assert!(diagnostics
             .iter()
-            .any(|d| d.message.contains("break outside")));
+            .any(|d| d.message.contains("break can only be used")));
     }
 
     #[test]
@@ -531,7 +589,7 @@ mod tests {
         let diagnostics = result.expect_err("expected a diagnostic");
         assert!(diagnostics
             .iter()
-            .any(|d| d.message.contains("continue outside")));
+            .any(|d| d.message.contains("continue can only be used")));
     }
 
     #[test]
@@ -546,7 +604,7 @@ mod tests {
             1,
             "unexpected diagnostics: {diagnostics:?}"
         );
-        assert!(diagnostics[0].message.contains("break outside"));
+        assert!(diagnostics[0].message.contains("break can only be used"));
     }
 
     #[test]
