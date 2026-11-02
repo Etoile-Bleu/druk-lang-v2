@@ -141,6 +141,7 @@ impl<'src> Parser<'src> {
                     | TokenKind::KwBool
                     | TokenKind::KwIf
                     | TokenKind::KwWhile
+                    | TokenKind::KwFor
                     | TokenKind::KwBreak
                     | TokenKind::KwContinue
                     | TokenKind::KwReturn
@@ -321,6 +322,28 @@ mod tests {
                 assert!(matches!(arms[1].pattern, Pattern::Wildcard));
             }
             other => panic!("expected Match statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_a_three_clause_for_loop() {
+        let ast = parse_ok("རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) { བཀོད་ i; }");
+        match ast.stmt(ast.top_level[0]) {
+            Stmt::For {
+                init,
+                condition,
+                post,
+                body,
+            } => {
+                match ast.stmt(*init) {
+                    Stmt::Let { name, .. } => assert_eq!(name, "i"),
+                    other => panic!("expected Let statement, got {other:?}"),
+                }
+                assert!(matches!(ast.expr(*condition), Expr::Binary { .. }));
+                assert!(matches!(ast.expr(*post), Expr::Assign { .. }));
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("expected For statement, got {other:?}"),
         }
     }
 

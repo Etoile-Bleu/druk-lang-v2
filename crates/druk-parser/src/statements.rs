@@ -13,6 +13,7 @@ impl<'src> Parser<'src> {
             Some(TokenKind::KwPrint) => self.parse_print_stmt(),
             Some(TokenKind::KwIf) => self.parse_if_stmt(),
             Some(TokenKind::KwWhile) => self.parse_while_stmt(),
+            Some(TokenKind::KwFor) => self.parse_for_stmt(),
             Some(TokenKind::KwBreak) => self.parse_break_stmt(),
             Some(TokenKind::KwContinue) => self.parse_continue_stmt(),
             Some(TokenKind::KwReturn) => self.parse_return_stmt(),
@@ -116,6 +117,29 @@ impl<'src> Parser<'src> {
         self.expect(TokenKind::RParen, "')'");
         let body = self.parse_stmt_or_block();
         self.ast.alloc_stmt(Stmt::While { condition, body })
+    }
+
+    /// Parses the one documented three-clause form, every clause required:
+    /// `init` is a `let`-shaped declaration (its own trailing `;` doubles as
+    /// the separator before `condition`), `condition` is followed by its own
+    /// explicit `;`, and `post` is a bare expression with no trailing `;` of
+    /// its own, since `)` ends the header. Omitting a clause, as C allows,
+    /// is not supported: no documented syntax or bundled example needs it.
+    fn parse_for_stmt(&mut self) -> StmtId {
+        self.advance();
+        self.expect(TokenKind::LParen, "'('");
+        let init = self.parse_let_stmt();
+        let condition = self.parse_expression();
+        self.expect(TokenKind::Semi, "';'");
+        let post = self.parse_expression();
+        self.expect(TokenKind::RParen, "')'");
+        let body = self.parse_block();
+        self.ast.alloc_stmt(Stmt::For {
+            init,
+            condition,
+            post,
+            body,
+        })
     }
 
     fn parse_break_stmt(&mut self) -> StmtId {
