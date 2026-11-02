@@ -107,7 +107,7 @@ impl<'src> Parser<'src> {
             let span = self.current_span();
             self.diagnostics.push(
                 Diagnostic::error(format!("expected {what}"))
-                    .with_label(span, "found here instead"),
+                    .with_label(span, "this is what's here instead"),
             );
             false
         }
@@ -119,7 +119,8 @@ impl<'src> Parser<'src> {
         } else {
             let span = self.current_span();
             self.diagnostics.push(
-                Diagnostic::error("expected an identifier").with_label(span, "found here instead"),
+                Diagnostic::error("expected a name here")
+                    .with_label(span, "this is what's here instead"),
             );
             String::new()
         }

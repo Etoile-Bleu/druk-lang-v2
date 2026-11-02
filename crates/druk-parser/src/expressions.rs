@@ -296,8 +296,8 @@ impl<'src> Parser<'src> {
             _ => {
                 let span = self.current_span();
                 self.diagnostics.push(
-                    Diagnostic::error("expected an expression")
-                        .with_label(span, "found here instead"),
+                    Diagnostic::error("expected a value or a calculation here")
+                        .with_label(span, "this is what's here instead"),
                 );
                 if !self.at_end() {
                     self.advance();
