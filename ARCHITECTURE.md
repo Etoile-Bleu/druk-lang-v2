@@ -144,3 +144,39 @@ separate from the use-cases that call it. `druk-runtime`'s functions are `extern
 `druk-codegen-llvm` can `declare` and call them from generated LLVM IR; `druk-runtime` is the only
 crate (besides `druk-codegen-llvm` itself) that needs to know the ABI details of the generated
 code.
+
+## Diagnostics: plain language, and why staged syntax is not in scope
+
+Every `Diagnostic` message in `druk-lexer`/`druk-parser`/`druk-hir`/`druk-ir` is written against a
+checklist, applied when writing a new one and when reviewing an existing one:
+
+- No compiler jargon a total beginner hasn't been taught: "expression", "identifier", "pattern",
+  and "type mismatch" are out; "a value or a calculation", "a name", "a value to match", and
+  "needs X, but this is Y" are in.
+- No leaking this compiler's own internal shape. A type's name in a message is never its Rust
+  `Debug` output (`Array(Number)`, `Function { params: [...], ret: ... }`); it goes through
+  `Type`'s `Display` impl in `druk-hir` instead ("a list", "a function"), which describes the kind
+  of value, not this compiler's enum structure.
+- State what the machine needed and what it actually found, in that order, rather than naming the
+  failure in the abstract ("type mismatch", "invalid assignment target").
+- Prefer a concrete example over an abstract category where one is cheap to show: "expected a
+  type, like གྲངས་ (number)..." over "expected a type".
+- Bilingual (Dzongkha/English) message translation is a deliberately separate, lower-confidence
+  bet, not part of this pass: research on novice error-message comprehension found translating a
+  message alone doesn't reliably improve understanding, while rewriting toward plain language
+  does more (see issue #37's sources: Hedy's ECOOP 2022 paper, and the ACM study on teaching
+  programming error message understanding). Plain language first; translation, if it happens, is
+  a later and weaker lever layered on top, not a substitute for this pass.
+
+**Decision: staged/leveled syntax (gating lambdas, pattern matching, or arrays behind an explicit
+difficulty level, the way Hedy does) is explicitly out of scope, not deferred.** Hedy's own design
+gates *syntax* itself behind levels because its target age group is pre-literate in programming
+concepts entirely; Druk's target curriculum already sequences concepts through `examples/`'s own
+numbering (arithmetic before control flow, control flow before functions, functions before
+closures) and through what the national ICT curriculum teaches before and after Druk. Gating the
+grammar itself would duplicate that ordering inside the compiler and require Druk to track
+curriculum sequencing it has no visibility into, for a benefit staged syntax's own research
+backing doesn't clearly attribute to the staging mechanism rather than Hedy's broader pedagogical
+design. Curriculum ordering, not compiler-enforced levels, is this project's lever for sequencing
+what a student sees, consistent with the "small stdlib matched to the curriculum, not a general
+package ecosystem" line in the `DrukCompiler` skill's design compass.
