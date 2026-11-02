@@ -298,6 +298,23 @@ mod tests {
     }
 
     #[test]
+    fn runs_a_for_loop() {
+        compile_and_run("རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) {\n    བཀོད་ i;\n}");
+    }
+
+    #[test]
+    fn a_for_loop_with_many_iterations_does_not_overflow_the_stack() {
+        // Same concern as the while-loop version of this test just below:
+        // `compile_for`'s body, cond, and post blocks each re-execute every
+        // iteration, so any `alloca` not routed through
+        // `CodeGen::build_entry_alloca` would grow the native stack by one
+        // slot per iteration here too.
+        compile_and_run(
+            "གྲངས་ total = ༠;\nརེ་རེར་ (གྲངས་ i = ༠; i < ༡༠༠༠༠༠; i = i + ༡) {\n    total = total + i;\n}\nབཀོད་ total;",
+        );
+    }
+
+    #[test]
     fn a_while_loop_with_many_iterations_does_not_overflow_the_stack() {
         // Every expression evaluated inside a loop body used to `alloca` at
         // the builder's current position, i.e. inside the loop's own basic
