@@ -157,4 +157,61 @@ mod tests {
 
         let _ = std::fs::remove_file(&output_path);
     }
+
+    #[test]
+    fn a_nested_loops_break_and_continue_target_only_their_own_loop() {
+        // `break`/`continue` compile to a branch on a per-loop target block
+        // stack (see druk-codegen-llvm's `loop_stack`). The one way that
+        // stack could misbehave is scoping to the wrong loop once two are
+        // nested: an inner `break` escaping to the outer loop's exit, or an
+        // inner `continue` jumping to the outer loop's condition. This
+        // source is built to make either mistake visible in the output: the
+        // inner loop should print 1 and 3 (skipping 2 via continue, then
+        // breaking at 4) on every one of the outer loop's 3 iterations, and
+        // the outer loop's own print after the inner loop must still run
+        // every time.
+        let source = "\
+            གྲངས་ i = ༠;\n\
+            ཡང་བསྐྱར་ (i < ༣) {\n\
+                i = i + ༡;\n\
+                གྲངས་ j = ༠;\n\
+                ཡང་བསྐྱར་ (j < ༥) {\n\
+                    j = j + ༡;\n\
+                    གལ་སྲིད་ (j == ༢) {\n\
+                        མུ་མཐུད་;\n\
+                    }\n\
+                    གལ་སྲིད་ (j == ༤) {\n\
+                        ཆད་;\n\
+                    }\n\
+                    བཀོད་ j;\n\
+                }\n\
+                བཀོད་ i;\n\
+            }\n\
+        ";
+
+        let mut output_path = std::env::temp_dir();
+        output_path.push(format!(
+            "druk_nested_break_continue_test_{}.exe",
+            std::process::id()
+        ));
+
+        let build_result = build_source(source, &output_path);
+        assert!(
+            build_result.is_ok(),
+            "failed to build a standalone executable: {build_result:?}"
+        );
+
+        let run_output = std::process::Command::new(&output_path)
+            .output()
+            .expect("the built executable should run");
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        let expected = "1\n3\n1\n1\n3\n2\n1\n3\n3\n";
+        assert_eq!(
+            stdout.replace("\r\n", "\n"),
+            expected,
+            "break/continue in a nested loop did not stay scoped to the inner loop"
+        );
+
+        let _ = std::fs::remove_file(&output_path);
+    }
 }

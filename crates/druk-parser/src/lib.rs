@@ -141,6 +141,8 @@ impl<'src> Parser<'src> {
                     | TokenKind::KwBool
                     | TokenKind::KwIf
                     | TokenKind::KwWhile
+                    | TokenKind::KwBreak
+                    | TokenKind::KwContinue
                     | TokenKind::KwReturn
                     | TokenKind::KwPrint
                     | TokenKind::KwMatch
@@ -319,6 +321,19 @@ mod tests {
                 assert!(matches!(arms[1].pattern, Pattern::Wildcard));
             }
             other => panic!("expected Match statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_break_and_continue_inside_a_while_body() {
+        let ast = parse_ok("ཡང་བསྐྱར་ (བདེན་པ་) { ཆད་; མུ་མཐུད་; }");
+        match ast.stmt(ast.top_level[0]) {
+            Stmt::While { body, .. } => {
+                assert_eq!(body.len(), 2);
+                assert!(matches!(ast.stmt(body[0]), Stmt::Break));
+                assert!(matches!(ast.stmt(body[1]), Stmt::Continue));
+            }
+            other => panic!("expected While statement, got {other:?}"),
         }
     }
 

@@ -64,6 +64,8 @@ pub enum IrStmt {
         cond: IrExpr,
         body: Vec<IrStmt>,
     },
+    Break,
+    Continue,
     Return(Option<IrExpr>),
     Block(Vec<IrStmt>),
 }
@@ -377,6 +379,19 @@ mod tests {
         match &module.main.body[2] {
             IrStmt::Expr(IrExpr::FieldSet(_, field, _)) => assert_eq!(field, "y"),
             other => panic!("expected Expr(FieldSet), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_break_and_continue_to_their_own_ir_statements() {
+        let module = lower_source("ཡང་བསྐྱར་ (བདེན་པ་) { ཆད་; མུ་མཐུད་; }").expect("should lower");
+        match &module.main.body[0] {
+            IrStmt::While { body, .. } => {
+                assert_eq!(body.len(), 2);
+                assert!(matches!(body[0], IrStmt::Break));
+                assert!(matches!(body[1], IrStmt::Continue));
+            }
+            other => panic!("expected While statement, got {other:?}"),
         }
     }
 

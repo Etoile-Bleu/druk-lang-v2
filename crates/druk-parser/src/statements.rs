@@ -13,6 +13,8 @@ impl<'src> Parser<'src> {
             Some(TokenKind::KwPrint) => self.parse_print_stmt(),
             Some(TokenKind::KwIf) => self.parse_if_stmt(),
             Some(TokenKind::KwWhile) => self.parse_while_stmt(),
+            Some(TokenKind::KwBreak) => self.parse_break_stmt(),
+            Some(TokenKind::KwContinue) => self.parse_continue_stmt(),
             Some(TokenKind::KwReturn) => self.parse_return_stmt(),
             Some(TokenKind::KwFunction) => self.parse_function_decl(),
             Some(TokenKind::KwMatch) => self.parse_match_stmt(),
@@ -114,6 +116,18 @@ impl<'src> Parser<'src> {
         self.expect(TokenKind::RParen, "')'");
         let body = self.parse_stmt_or_block();
         self.ast.alloc_stmt(Stmt::While { condition, body })
+    }
+
+    fn parse_break_stmt(&mut self) -> StmtId {
+        self.advance();
+        self.expect(TokenKind::Semi, "';'");
+        self.ast.alloc_stmt(Stmt::Break)
+    }
+
+    fn parse_continue_stmt(&mut self) -> StmtId {
+        self.advance();
+        self.expect(TokenKind::Semi, "';'");
+        self.ast.alloc_stmt(Stmt::Continue)
     }
 
     fn parse_return_stmt(&mut self) -> StmtId {
