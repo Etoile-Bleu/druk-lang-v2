@@ -106,3 +106,6 @@ runs:
         $dir = Join-Path "${{ github.workspace }}" '.cargo'
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
         Set-Content -Path (Join-Path $dir 'config.toml') -Value @('[build]', "rustflags = $flags") -Encoding ascii
+        Write-Host "Windows SDK library directory: $sdk"
+        Write-Host (Get-Content (Join-Path $dir 'config.toml') -Raw)
+        Write-Host "psapi.lib present there: $(Test-Path (Join-Path $sdk 'psapi.lib'))"
