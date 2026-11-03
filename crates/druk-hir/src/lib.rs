@@ -251,6 +251,29 @@ impl<'a> Checker<'a> {
                 self.check_expr(*post);
                 self.scopes.pop();
             }
+            Stmt::ForEach {
+                var,
+                iterable,
+                body,
+            } => {
+                let iterable_type = self.check_expr(*iterable);
+                let element_type = match iterable_type {
+                    Type::Array(element) => *element,
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.diagnostics.push(Diagnostic::error(format!(
+                            "this is {other}, not a list, so it can't be used with ནང་"
+                        )));
+                        Type::Unknown
+                    }
+                };
+                self.scopes.push(HashMap::new());
+                self.declare(var.clone(), element_type);
+                self.loop_depth += 1;
+                self.check_block(body);
+                self.loop_depth -= 1;
+                self.scopes.pop();
+            }
             Stmt::Break => {
                 if self.loop_depth == 0 {
                     self.diagnostics.push(Diagnostic::error(
@@ -603,6 +626,20 @@ mod tests {
         let result = check_source("རེ་རེར་ (གྲངས་ i = ༠; i; i = i + ༡) { བཀོད་ i; }");
         let diagnostics = result.expect_err("expected a diagnostic");
         assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
+    }
+
+    #[test]
+    fn checks_a_for_each_loop_over_an_array_and_types_its_loop_variable() {
+        let result =
+            check_source("གྲངས་[] numbers = [༡, ༢, ༣]; རེ་རེར་ (n ནང་ numbers) { བཀོད་ n + ༡; }");
+        assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
+    }
+
+    #[test]
+    fn reports_iterating_a_non_array_in_a_for_each_loop() {
+        let result = check_source("གྲངས་ x = ༡; རེ་རེར་ (n ནང་ x) { བཀོད་ n; }");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics.iter().any(|d| d.message.contains("not a list")));
     }
 
     #[test]
