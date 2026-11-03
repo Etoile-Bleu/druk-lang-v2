@@ -418,6 +418,30 @@ mod tests {
     }
 
     #[test]
+    fn lowers_a_for_each_loop_to_a_for_with_an_index_and_an_array_get() {
+        let module = lower_source("གྲངས་[] numbers = [༡, ༢, ༣]; རེ་རེར་ (n ནང་ numbers) { བཀོད་ n; }")
+            .expect("should lower");
+        match &module.main.body[1] {
+            IrStmt::For {
+                init, cond, body, ..
+            } => {
+                assert!(matches!(init.as_ref(), IrStmt::Block(stmts) if stmts.len() == 2));
+                assert!(matches!(
+                    cond,
+                    IrExpr::Binary(BinOp::Lt, _, rhs)
+                        if matches!(rhs.as_ref(), IrExpr::Builtin(BuiltinOp::Len, _))
+                ));
+                assert!(matches!(
+                    &body[0],
+                    IrStmt::Expr(IrExpr::SetLocal(_, value))
+                        if matches!(value.as_ref(), IrExpr::ArrayGet(_, _))
+                ));
+            }
+            other => panic!("expected For statement, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn lowers_break_and_continue_to_their_own_ir_statements() {
         let module = lower_source("ཡང་བསྐྱར་ (བདེན་པ་) { ཆད་; མུ་མཐུད་; }").expect("should lower");
         match &module.main.body[0] {
