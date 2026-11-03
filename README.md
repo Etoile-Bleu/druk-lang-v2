@@ -162,6 +162,16 @@ Known gaps, none of which the bundled examples need:
 Requires a recent stable Rust toolchain, plus LLVM 22 for `druk-codegen-llvm` (the only crate that
 depends on it, via `inkwell`).
 
+On Linux, one script does all of this for you. It installs the exact LLVM release CI uses into
+`~/.cache/druk/`, prints the two environment variables to add to your shell profile, and with
+`--check` runs the same format, lint, and test steps CI runs:
+
+```sh
+./scripts/setup-dev.sh --check
+```
+
+To set things up by hand instead (on Windows, or to use an LLVM you already have):
+
 1. Install LLVM 22 with static libraries (a prebuilt `clang+llvm-22.*`/`LLVM-22.*` archive from
    [the LLVM releases page](https://github.com/llvm/llvm-project/releases) works; it must ship
    `bin/llvm-config` and `bin/llc`).
