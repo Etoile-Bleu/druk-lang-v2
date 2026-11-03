@@ -1,11 +1,12 @@
 name: Set up LLVM for druk-codegen-llvm
 description: >
   Downloads (and caches) the prebuilt LLVM release matching inkwell's
-  llvm22-1 feature, sets LLVM_SYS_221_PREFIX and PATH so both the build
-  (llvm-sys) and the test/runtime path (druk build shelling out to llc) can
-  find it, and works around the two Windows-only quirks documented in
-  README.md (the missing xml2s.lib system dependency, and MSVC's own
-  environment not being on PATH by default on a GitHub-hosted runner).
+  llvm22-1 feature and sets LLVM_SYS_221_PREFIX so the build (llvm-sys) can
+  find it. LLVM is only needed to build druk, never to run it, so its bin
+  directory is deliberately not put on PATH. On Windows it also handles the
+  quirks documented in README.md: the missing xml2s.lib system dependency,
+  MSVC's own environment not being on PATH by default on a GitHub-hosted
+  runner, and the static C runtime the prebuilt LLVM libraries require.
 
 inputs:
   llvm-version:
@@ -81,18 +82,27 @@ runs:
     - name: Set LLVM environment (Linux)
       if: runner.os == 'Linux'
       shell: bash
-      run: |
-        echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}/llvm" >> "$GITHUB_ENV"
-        # Native compilation (`druk build`) shells out to `llc` at run time,
-        # not just at `druk-codegen-llvm` build time, so its bin/ directory
-        # needs to be on PATH, not just known via the prefix env var
-        # llvm-sys itself uses.
-        echo "${{ runner.temp }}/llvm/bin" >> "$GITHUB_PATH"
+      run: echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}/llvm" >> "$GITHUB_ENV"
 
     - name: Set LLVM environment (Windows)
       if: runner.os == 'Windows'
       shell: bash
+      run: echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}\\llvm" >> "$GITHUB_ENV"
+
+    - name: Configure Rust flags (Windows)
+      # The prebuilt LLVM libraries use the static C runtime, so druk must
+      # too (see crates/druk-codegen-llvm/build.rs). llvm-sys then links
+      # LLVM's system libraries (psapi, shell32, ...) as static libraries,
+      # which rustc looks up on its -L path, so the Windows SDK's library
+      # directory has to be on it. That path contains spaces, which RUSTFLAGS
+      # cannot carry, hence a config file instead of an environment variable.
+      if: runner.os == 'Windows'
+      shell: pwsh
       run: |
-        echo "LLVM_SYS_221_PREFIX=${{ runner.temp }}\\llvm" >> "$GITHUB_ENV"
-        echo "RUSTFLAGS=-L ${{ runner.temp }}\\llvm-stub-libs" >> "$GITHUB_ENV"
-        echo "${{ runner.temp }}\\llvm\\bin" >> "$GITHUB_PATH"
+        $sdk = $env:LIB -split ';' | Where-Object { $_ -match '\\um\\x64$' } | Select-Object -First 1
+        if (-not $sdk) { throw 'the Windows SDK um\x64 library directory is not in LIB' }
+        $stub = "${{ runner.temp }}\llvm-stub-libs"
+        $flags = '["-L", "{0}", "-L", "{1}", "-C", "target-feature=+crt-static"]' -f ($stub -replace '\\', '/'), ($sdk -replace '\\', '/')
+        $dir = Join-Path "${{ github.workspace }}" '.cargo'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        Set-Content -Path (Join-Path $dir 'config.toml') -Value @('[build]', "rustflags = $flags") -Encoding ascii
