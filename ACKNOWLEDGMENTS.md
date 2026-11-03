@@ -56,11 +56,11 @@ The layered, one-directional crate graph (`druk-diagnostics` -> `druk-lexer` -> 
 `druk-driver` -> `druk`) is modeled directly on how `rustc` itself is split into layered crates,
 and on how `rust-analyzer` structures its own frontend:
 
-- [rustc-dev-guide: compiler source layout](https://rustc-dev-guide.rust-lang.org/compiler-src.html)
-  — the general principle of splitting a compiler into crates with a strict dependency direction,
+- [rustc-dev-guide: compiler source layout](https://rustc-dev-guide.rust-lang.org/compiler-src.html):
+  the general principle of splitting a compiler into crates with a strict dependency direction,
   mirrored in this project's own crate graph.
-- [rustc-dev-guide: incremental compilation in detail](https://rustc-dev-guide.rust-lang.org/queries/incremental-compilation-in-detail.html)
-  — the "pure function from input to output, identified by an ID" shape that `druk-hir`'s checker
+- [rustc-dev-guide: incremental compilation in detail](https://rustc-dev-guide.rust-lang.org/queries/incremental-compilation-in-detail.html):
+  the "pure function from input to output, identified by an ID" shape that `druk-hir`'s checker
   follows, chosen specifically so a future move to `salsa`-style incremental queries would be a
   mechanical change rather than a rewrite.
 - The **arena + typed-ID** pattern used throughout `druk-ast` (`ExprId(u32)` etc. instead of
@@ -80,7 +80,7 @@ Every crate this project links against, and why it was chosen:
 
 | Crate | Used for | Why this one |
 |---|---|---|
-| [`logos`](https://docs.rs/logos) | `druk-lexer`'s tokenizer | Compiles its rules to a DFA at build time (zero runtime regex cost) and is Unicode-aware by default, though Tibetan-script identifier/keyword matching still needed explicit `#[regex]` ranges rather than relying on generic Unicode identifier classes — see the [logos Unicode support docs](https://logos.maciej.codes/unicode-support.html) and the `DrukCompiler` skill's own Gotcha on this. |
+| [`logos`](https://docs.rs/logos) | `druk-lexer`'s tokenizer | Compiles its rules to a DFA at build time (zero runtime regex cost) and is Unicode-aware by default, though Tibetan-script identifier/keyword matching still needed explicit `#[regex]` ranges rather than relying on generic Unicode identifier classes, see the [logos Unicode support docs](https://logos.maciej.codes/unicode-support.html) and the `DrukCompiler` skill's own Gotcha on this. |
 | [`ariadne`](https://docs.rs/ariadne) | `druk-diagnostics`' rendered error output | Rustc-style multi-span diagnostics, lighter weight than `miette` for this project's needs. |
 | [`inkwell`](https://github.com/TheDan64/inkwell) | `druk-codegen-llvm`'s safe-ish LLVM bindings | The standard safe wrapper over `llvm-sys` for Rust; see [sdiehl's Compiler Crates guide on inkwell](https://sdiehl.github.io/compiler-crates/inkwell.html) and [createlang.rs](https://createlang.rs/01_calculator/basic_llvm.html) for the introductory patterns `druk-codegen-llvm`'s `CodeGen { context, module, builder }` shape follows. A confirmed upstream bug, [TheDan64/inkwell#736](https://github.com/TheDan64/inkwell/issues/736), is the documented reason `druk build` shells out to the real `llc` binary instead of emitting objects through inkwell's own API (see issue #107). |
 | [`insta`](https://docs.rs/insta) | Snapshot testing across every crate, and the end-to-end golden-output tests in `crates/druk/tests/examples.rs` | The established Rust pattern for asserting on AST/diagnostic/output shapes that change form often, rather than hand-written `assert_eq!` on complex structures. |
