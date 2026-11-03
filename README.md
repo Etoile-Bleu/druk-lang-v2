@@ -10,7 +10,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Linux_%7C_Windows-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-**[Language reference](docs/dzongkha_reference.md) · [Font & keyboard setup](docs/dzongkha_input_setup_en.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)**
+**[Language reference](docs/dzongkha_reference.md) ([EN](docs/dzongkha_reference_en.md)) · [Font & keyboard setup](docs/dzongkha_input_setup_en.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Acknowledgments](ACKNOWLEDGMENTS.md)**
 
 <img src="docs/assets/terminal.svg" alt="A terminal running druk run on four bundled examples: hello world printing Hello, Druk Lang! and a Dzongkha greeting, recursion printing 13, arrays printing 1, 5, 99, and the combined demo printing 12 and Math works!" width="640">
 
@@ -56,7 +56,8 @@ workspace instead of a single sprawling source tree, compiling through LLVM.
 
 `གྲངས་` declares a number, `བཀོད་` prints, `ལས་འགན་` declares a function, `གལ་སྲིད་` is `if`,
 `སླར་ལོག་` is `return`, and `༡༠`/`༥`/`༧` are Tibetan digits. See
-[docs/dzongkha_reference.md](docs/dzongkha_reference.md) for the full keyword table and
+[docs/dzongkha_reference.md](docs/dzongkha_reference.md) (also available [in
+English](docs/dzongkha_reference_en.md)) for the full keyword table and
 [examples/](examples/) for runnable programs covering arithmetic, control flow, loops, functions,
 recursion, lambdas, pattern matching, arrays, and structs. If Dzongkha text doesn't render as
 clean stacked letters in your editor or terminal, see
@@ -140,7 +141,7 @@ The full pipeline (lexer, parser, HIR, IR, LLVM codegen, a real mark-and-sweep G
 on both Linux and Windows, verified by CI, through either of two backends: `druk run` JIT-executes
 a `.druk` file directly, and `druk build` compiles it ahead-of-time to a standalone native
 executable (via `llc` for object emission and `rustc` for the final link against `druk-runtime`,
-both of which need to be on `PATH`; see Building below). All 20 bundled `examples/*.druk` programs
+both of which need to be on `PATH`; see Building below). All 21 bundled `examples/*.druk` programs
 compile and execute correctly through both paths, including structs, closures that capture a
 variable from their immediately enclosing scope, and the Dzongkha builtins `len`, `push`, `pop`,
 `typeof`, `input`, `argv`, and `argc` (`argv`/`argc` reflect the program's own real command-line

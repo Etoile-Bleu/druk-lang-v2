@@ -70,7 +70,12 @@ pub enum TokenKind {
     #[token("ནང་འཇུག་")]
     BuiltinInput,
 
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*")]
+    // ASCII letters/digits/underscore, or Tibetan consonants (ཀ-ཬ), vowel
+    // signs (ཱ-྄), subjoined consonants (ྐ-ྼ), and the tsheg syllable
+    // separator (་) once past the first character, so a real multi-syllable
+    // Dzongkha compound identifier like སློབ་ཕྲུག་གི་སྐར་གྲངས་ lexes as one
+    // token instead of failing one codepoint at a time.
+    #[regex("[a-zA-Z_ཀ-ཬཱ-྄ྐ-ྼ][a-zA-Z0-9_ཀ-ཬཱ-྄ྐ-ྼ་]*")]
     Ident,
     #[regex("[༠-༩]+")]
     Integer,
@@ -99,6 +104,8 @@ pub enum TokenKind {
     Star,
     #[token("/")]
     Slash,
+    #[token("%")]
+    Percent,
     #[token("<")]
     Lt,
     #[token(">")]
@@ -275,6 +282,15 @@ mod tests {
     }
 
     #[test]
+    fn lexes_percent_distinct_from_adjacent_integers() {
+        let source = "༡༠ % ༣";
+        assert_eq!(
+            kinds(source),
+            vec![TokenKind::Integer, TokenKind::Percent, TokenKind::Integer,]
+        );
+    }
+
+    #[test]
     fn lexes_break_and_continue_inside_a_while_body() {
         let source = "ཡང་བསྐྱར་ (བདེན་པ་) { ཆད་; མུ་མཐུད་; }";
         assert_eq!(
@@ -353,6 +369,28 @@ mod tests {
         );
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].kind, TokenKind::Integer);
+    }
+
+    #[test]
+    fn lexes_a_multi_syllable_dzongkha_compound_identifier_as_one_token() {
+        let source = "གྲངས་ སློབ་ཕྲུག་གི་སྐར་གྲངས་ = ༡༠;";
+        let (tokens, diagnostics) = tokenize(source);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected diagnostics: {diagnostics:?}"
+        );
+        let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::KwNumber,
+                TokenKind::Ident,
+                TokenKind::Eq,
+                TokenKind::Integer,
+                TokenKind::Semi,
+            ]
+        );
+        assert_eq!(tokens[1].text, "སློབ་ཕྲུག་གི་སྐར་གྲངས་");
     }
 
     #[test]
