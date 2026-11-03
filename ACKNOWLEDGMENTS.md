@@ -45,9 +45,8 @@ facts about computer science education in Bhutan:
   keywords themselves.
 
 This is the direct motivation behind Druk's keywords, identifiers, and numerals being written in
-Dzongkha rather than transliterated or kept in English, and behind this skill's own "plain
-diagnostics a student can read and act on" priority ranking above translation (`DrukCompiler`
-skill, Design Philosophy section; see also issue #37).
+Dzongkha rather than transliterated or kept in English, and behind this project's own "plain
+diagnostics a student can read and act on" priority ranking above translation (see issue #37).
 
 ## Architecture: how the compiler is laid out
 
@@ -80,7 +79,7 @@ Every crate this project links against, and why it was chosen:
 
 | Crate | Used for | Why this one |
 |---|---|---|
-| [`logos`](https://docs.rs/logos) | `druk-lexer`'s tokenizer | Compiles its rules to a DFA at build time (zero runtime regex cost) and is Unicode-aware by default, though Tibetan-script identifier/keyword matching still needed explicit `#[regex]` ranges rather than relying on generic Unicode identifier classes, see the [logos Unicode support docs](https://logos.maciej.codes/unicode-support.html) and the `DrukCompiler` skill's own Gotcha on this. |
+| [`logos`](https://docs.rs/logos) | `druk-lexer`'s tokenizer | Compiles its rules to a DFA at build time (zero runtime regex cost) and is Unicode-aware by default, though Tibetan-script identifier/keyword matching still needed explicit `#[regex]` ranges rather than relying on generic Unicode identifier classes, see the [logos Unicode support docs](https://logos.maciej.codes/unicode-support.html). |
 | [`ariadne`](https://docs.rs/ariadne) | `druk-diagnostics`' rendered error output | Rustc-style multi-span diagnostics, lighter weight than `miette` for this project's needs. |
 | [`inkwell`](https://github.com/TheDan64/inkwell) | `druk-codegen-llvm`'s safe-ish LLVM bindings | The standard safe wrapper over `llvm-sys` for Rust; see [sdiehl's Compiler Crates guide on inkwell](https://sdiehl.github.io/compiler-crates/inkwell.html) and [createlang.rs](https://createlang.rs/01_calculator/basic_llvm.html) for the introductory patterns `druk-codegen-llvm`'s `CodeGen { context, module, builder }` shape follows. A confirmed upstream bug, [TheDan64/inkwell#736](https://github.com/TheDan64/inkwell/issues/736), is the documented reason `druk build` shells out to the real `llc` binary instead of emitting objects through inkwell's own API (see issue #107). |
 | [`insta`](https://docs.rs/insta) | Snapshot testing across every crate, and the end-to-end golden-output tests in `crates/druk/tests/examples.rs` | The established Rust pattern for asserting on AST/diagnostic/output shapes that change form often, rather than hand-written `assert_eq!` on complex structures. |
@@ -135,5 +134,4 @@ Whenever a piece of code in this repository is written by consulting a specific 
 (a library's own documentation beyond its basic API signature, a blog post or article describing
 an algorithm or pattern, another open-source project's implementation, a paper, a Stack Overflow
 answer that supplied the actual approach, and so on), that source is added here, in the section
-it best fits, as part of the same change, not as a follow-up. See the `DrukCompiler` skill's
-"Constraints" section for the standing rule this enforces.
+it best fits, as part of the same change, not as a follow-up.
