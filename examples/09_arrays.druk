@@ -4,3 +4,9 @@
 
 numbers[༢] = ༩༩;
 བཀོད་ numbers[༢];
+
+གྲངས་ total = ༠;
+རེ་རེར་ (n ནང་ numbers) {
+    total = total + n;
+}
+བཀོད་ total;
