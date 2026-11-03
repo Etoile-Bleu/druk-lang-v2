@@ -72,7 +72,7 @@ how to install them:
 | Language | Needs | Override with |
 |---|---|---|
 | `druk-jit` | the release `druk` binary | `DRUK` |
-| `druk-native` | the release `druk` binary, `rustc` on `PATH` | `DRUK` |
+| `druk-native` | the release `druk` binary and the platform's linker (see the main README) | `DRUK` |
 | `python` | `python3` | `PYTHON` |
 | `lua` | `lua` | `LUA` |
 | `c` | `gcc` | `CC` |
