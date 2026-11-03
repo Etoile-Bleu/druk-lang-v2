@@ -383,6 +383,41 @@ mod tests {
     }
 
     #[test]
+    fn parses_a_for_each_loop_over_an_array() {
+        let ast = parse_ok("རེ་རེར་ (n ནང་ numbers) { བཀོད་ n; }");
+        match ast.stmt(ast.top_level[0]) {
+            Stmt::ForEach {
+                var,
+                iterable,
+                body,
+            } => {
+                assert_eq!(var, "n");
+                assert!(matches!(ast.expr(*iterable), Expr::Ident(name) if name == "numbers"));
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("expected ForEach statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn disambiguates_for_each_from_the_three_clause_for_by_its_first_token() {
+        // A bare identifier right after '(' can only start the for-each
+        // form; a type keyword can only start the three-clause form's
+        // `let`-shaped init clause. Both must still parse correctly from
+        // the same `KwFor` keyword.
+        let for_each = parse_ok("རེ་རེར་ (n ནང་ [༡, ༢]) { བཀོད་ n; }");
+        assert!(matches!(
+            for_each.stmt(for_each.top_level[0]),
+            Stmt::ForEach { .. }
+        ));
+        let three_clause = parse_ok("རེ་རེར་ (གྲངས་ i = ༠; i < ༥; i = i + ༡) { བཀོད་ i; }");
+        assert!(matches!(
+            three_clause.stmt(three_clause.top_level[0]),
+            Stmt::For { .. }
+        ));
+    }
+
+    #[test]
     fn parses_break_and_continue_inside_a_while_body() {
         let ast = parse_ok("ཡང་བསྐྱར་ (བདེན་པ་) { ཆད་; མུ་མཐུད་; }");
         match ast.stmt(ast.top_level[0]) {
