@@ -119,7 +119,7 @@ fi
 
 system_libs=$("$llvm_dir/bin/llvm-config" --link-static --system-libs)
 # shellcheck disable=SC2086
-if ! printf 'int main(void) { return 0; }\n' | cc -x c - -o /dev/null $system_libs 2>/dev/null; then
+if ! printf 'int main(void) { return 0; }\n' | cc -x c - -x none -o /dev/null $system_libs 2>/dev/null; then
     echo "" >&2
     echo "Error: LLVM links against these system libraries, and some are missing:" >&2
     echo "  $system_libs" >&2
