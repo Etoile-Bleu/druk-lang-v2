@@ -31,6 +31,7 @@
 | `མེད་ན་` | *med na* | "sinon, à défaut" | `else` |
 | `ཡང་བསྐྱར་` | *yang bskyar* | "encore, de nouveau" | `while` |
 | `རེ་རེར་` | *re rer* | "un par un, chacun" | `for` |
+| `ནང་` | *nang* | "dans, à l'intérieur" | `in` (dans `for ... in`) |
 | `ཆད་` | *chad* | "interrompre" | `break` |
 | `མུ་མཐུད་` | *mu mthud* | "continuer" | `continue` |
 | `སླར་ལོག་` | *slar log* | "retourner, revenir" | `return` |
@@ -155,6 +156,18 @@ Les nombres multi-chiffres s'écrivent normalement : `༡༢༣` = 123, `༡༠�
 ```
 རེ་རེར་ (གྲངས་ ཨང་ = ༠; ཨང་ < ༥; ཨང་ = ཨང་ + ༡) {
     བཀོད་ ཨང་;
+}
+```
+
+### Boucle for-each
+
+`རེ་རེར་` accepte aussi une seconde forme : une variable, `ནང་` ("dans"), puis un tableau. Elle
+parcourt chaque élément sans gérer d'index à la main.
+
+```
+གྲངས་[] nombres = [༡, ༢, ༣];
+རེ་རེར་ (n ནང་ nombres) {
+    བཀོད་ n;
 }
 ```
 
