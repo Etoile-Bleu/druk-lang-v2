@@ -121,15 +121,17 @@ impl<'src> Parser<'src> {
         self.ast.alloc_stmt(Stmt::While { condition, body })
     }
 
-    /// Parses the one documented three-clause form, every clause required:
-    /// `init` is a `let`-shaped declaration (its own trailing `;` doubles as
-    /// the separator before `condition`), `condition` is followed by its own
-    /// explicit `;`, and `post` is a bare expression with no trailing `;` of
-    /// its own, since `)` ends the header. Omitting a clause, as C allows,
-    /// is not supported: no documented syntax or bundled example needs it.
+    /// Dispatches to one of two forms sharing the same `རེ་རེར་` keyword,
+    /// disambiguated by the first token after `(`: the three-clause form's
+    /// `init` clause always starts with a type keyword (see
+    /// `parse_let_stmt`), so a bare identifier there can only be the
+    /// for-each form's loop variable, never a valid start of the other.
     fn parse_for_stmt(&mut self) -> StmtId {
         self.advance();
         self.expect(TokenKind::LParen, "'('");
+        if self.check(TokenKind::Ident) {
+            return self.parse_for_each_stmt();
+        }
         let init = self.parse_let_stmt();
         let condition = self.parse_expression();
         self.expect(TokenKind::Semi, "';'");
@@ -140,6 +142,21 @@ impl<'src> Parser<'src> {
             init,
             condition,
             post,
+            body,
+        })
+    }
+
+    /// Parses the `var ནང་ iterable` for-each form. The `(` has already
+    /// been consumed by `parse_for_stmt`.
+    fn parse_for_each_stmt(&mut self) -> StmtId {
+        let var = self.expect_ident();
+        self.expect(TokenKind::KwIn, "'ནང་'");
+        let iterable = self.parse_expression();
+        self.expect(TokenKind::RParen, "')'");
+        let body = self.parse_block();
+        self.ast.alloc_stmt(Stmt::ForEach {
+            var,
+            iterable,
             body,
         })
     }
