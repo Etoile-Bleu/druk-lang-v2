@@ -81,7 +81,7 @@ Every crate this project links against, and why it was chosen:
 |---|---|---|
 | [`logos`](https://docs.rs/logos) | `druk-lexer`'s tokenizer | Compiles its rules to a DFA at build time (zero runtime regex cost) and is Unicode-aware by default, though Tibetan-script identifier/keyword matching still needed explicit `#[regex]` ranges rather than relying on generic Unicode identifier classes, see the [logos Unicode support docs](https://logos.maciej.codes/unicode-support.html). |
 | [`ariadne`](https://docs.rs/ariadne) | `druk-diagnostics`' rendered error output | Rustc-style multi-span diagnostics, lighter weight than `miette` for this project's needs. |
-| [`inkwell`](https://github.com/TheDan64/inkwell) | `druk-codegen-llvm`'s safe-ish LLVM bindings | The standard safe wrapper over `llvm-sys` for Rust; see [sdiehl's Compiler Crates guide on inkwell](https://sdiehl.github.io/compiler-crates/inkwell.html) and [createlang.rs](https://createlang.rs/01_calculator/basic_llvm.html) for the introductory patterns `druk-codegen-llvm`'s `CodeGen { context, module, builder }` shape follows. A confirmed upstream bug, [TheDan64/inkwell#736](https://github.com/TheDan64/inkwell/issues/736), is the documented reason `druk build` shells out to the real `llc` binary instead of emitting objects through inkwell's own API (see issue #107). |
+| [`inkwell`](https://github.com/TheDan64/inkwell) | `druk-codegen-llvm`'s safe-ish LLVM bindings | The standard safe wrapper over `llvm-sys` for Rust; see [sdiehl's Compiler Crates guide on inkwell](https://sdiehl.github.io/compiler-crates/inkwell.html) and [createlang.rs](https://createlang.rs/01_calculator/basic_llvm.html) for the introductory patterns `druk-codegen-llvm`'s `CodeGen { context, module, builder }` shape follows. The crash reported in [TheDan64/inkwell#736](https://github.com/TheDan64/inkwell/issues/736) is why `druk build` once shelled out to `llc`; its cause turned out to be a C-runtime mismatch on Windows, fixed by building with a static C runtime (see "Research that shaped specific decisions" below). |
 | [`insta`](https://docs.rs/insta) | Snapshot testing across every crate, and the end-to-end golden-output tests in `crates/druk/tests/examples.rs` | The established Rust pattern for asserting on AST/diagnostic/output shapes that change form often, rather than hand-written `assert_eq!` on complex structures. |
 | [`thiserror`](https://docs.rs/thiserror) | Structured error types across the pipeline | Standard, low-ceremony derive for Rust error enums; keeps every user-facing failure a typed `Diagnostic` instead of a panic. |
 | [`clap`](https://docs.rs/clap) | The `druk` CLI's argument parsing | The de facto standard Rust CLI argument parser; keeps the `druk` binary itself free of hand-rolled arg parsing so it stays a thin driver wrapper, per `ARCHITECTURE.md`. |
@@ -115,6 +115,16 @@ Every crate this project links against, and why it was chosen:
   [Linux Foundation](https://www.linuxfoundation.org) baseline checklists for open-source project
   health, and against LLVM's own repository (which carries one), not against a generic sense of
   "best practice."
+- **Static C runtime on Windows**: building `druk` with `-C target-feature=+crt-static`, and the
+  build-time guard that enforces it, come from tracing the intermittent crash in
+  [inkwell#736](https://github.com/TheDan64/inkwell/issues/736) to a mismatch between the C runtime
+  the official prebuilt LLVM libraries request (`RuntimeLibrary=MT_StaticRelease`, read with
+  `llvm-readobj --coff-directives`) and Rust's dynamic default. The general pattern, that LLVM and
+  the project consuming it must agree on one C runtime, is described in an
+  [LLVM-on-Windows thread on the Mesa mailing list](https://lists.freedesktop.org/archives/mesa-dev/2015-April/081604.html),
+  and `llvm-sys` itself ties its system-library linking to `crt-static` in its
+  `build.rs` (repository: [taricorp/llvm-sys.rs](https://gitlab.com/taricorp/llvm-sys.rs)), which is
+  what makes this the supported combination rather than a workaround.
 
 ## What this file does not claim
 
