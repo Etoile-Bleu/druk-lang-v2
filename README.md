@@ -141,7 +141,7 @@ The full pipeline (lexer, parser, HIR, IR, LLVM codegen, a real mark-and-sweep G
 on both Linux and Windows, verified by CI, through either of two backends: `druk run` JIT-executes
 a `.druk` file directly, and `druk build` compiles it ahead-of-time to a standalone native
 executable (via `llc` for object emission and `rustc` for the final link against `druk-runtime`,
-both of which need to be on `PATH`; see Building below). All 20 bundled `examples/*.druk` programs
+both of which need to be on `PATH`; see Building below). All 21 bundled `examples/*.druk` programs
 compile and execute correctly through both paths, including structs, closures that capture a
 variable from their immediately enclosing scope, and the Dzongkha builtins `len`, `push`, `pop`,
 `typeof`, `input`, `argv`, and `argc` (`argv`/`argc` reflect the program's own real command-line
