@@ -265,6 +265,7 @@ fn binary_operand_evidence(op: BinOp) -> Option<Type> {
         | BinOp::Sub
         | BinOp::Mul
         | BinOp::Div
+        | BinOp::Rem
         | BinOp::Lt
         | BinOp::LtEq
         | BinOp::Gt

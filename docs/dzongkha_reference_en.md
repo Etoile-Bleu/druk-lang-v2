@@ -77,7 +77,7 @@ All operators use standard ASCII symbols.
 
 | Operator | Description |
 |---|---|
-| `+` `-` `*` `/` | Integer arithmetic |
+| `+` `-` `*` `/` `%` | Integer arithmetic (`%` is remainder) |
 | `==` `!=` | Equality |
 | `<` `<=` `>` `>=` | Comparison |
 | `&&` `||` | Logical AND / OR |
