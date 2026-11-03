@@ -38,6 +38,8 @@ pub enum TokenKind {
     KwWhile,
     #[token("རེ་རེར་")]
     KwFor,
+    #[token("ནང་")]
+    KwIn,
     #[token("ཆད་")]
     KwBreak,
     #[token("མུ་མཐུད་")]
@@ -210,6 +212,7 @@ mod tests {
             ("མེད་ན་", TokenKind::KwElse),
             ("ཡང་བསྐྱར་", TokenKind::KwWhile),
             ("རེ་རེར་", TokenKind::KwFor),
+            ("ནང་", TokenKind::KwIn),
             ("ཆད་", TokenKind::KwBreak),
             ("མུ་མཐུད་", TokenKind::KwContinue),
             ("སླར་ལོག་", TokenKind::KwReturn),
@@ -228,6 +231,12 @@ mod tests {
         assert_eq!(kinds("ནང་འཇུག་"), vec![TokenKind::BuiltinInput]);
         assert_eq!(kinds("ནང་འཇུག་ཐོ་"), vec![TokenKind::GlobalArgv]);
         assert_eq!(kinds("ནང་འཇུག་གྲངས་"), vec![TokenKind::GlobalArgc]);
+    }
+
+    #[test]
+    fn distinguishes_the_in_keyword_from_longer_nang_prefixed_tokens() {
+        assert_eq!(kinds("ནང་"), vec![TokenKind::KwIn]);
+        assert_eq!(kinds("ནང་འདུས་"), vec![TokenKind::BuiltinContains]);
     }
 
     #[test]

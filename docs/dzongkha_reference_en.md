@@ -31,6 +31,7 @@
 | `མེད་ན་` | *med na* | "otherwise, if not" | `else` |
 | `ཡང་བསྐྱར་` | *yang bskyar* | "again, once more" | `while` |
 | `རེ་རེར་` | *re rer* | "one by one, each" | `for` |
+| `ནང་` | *nang* | "inside, within" | `in` (in `for ... in`) |
 | `ཆད་` | *chad* | "to interrupt, stop" | `break` |
 | `མུ་མཐུད་` | *mu mthud* | "to continue" | `continue` |
 | `སླར་ལོག་` | *slar log* | "to return, come back" | `return` |
@@ -157,6 +158,18 @@ Multi-digit numbers are written normally: `༡༢༣` = 123, `༡༠༠༠` = 10
 ```druk
 རེ་རེར་ (གྲངས་ ཨང་ = ༠; ཨང་ < ༥; ཨང་ = ཨང་ + ༡) {
     བཀོད་ ཨང་;
+}
+```
+
+### For-Each Loop
+
+`རེ་རེར་` also accepts a second form: a variable, `ནང་` ("in"), then an array. It iterates every
+element without managing an index by hand.
+
+```druk
+གྲངས་[] numbers = [༡, ༢, ༣];
+རེ་རེར་ (n ནང་ numbers) {
+    བཀོད་ n;
 }
 ```
 

@@ -95,6 +95,10 @@ impl<'a> Checker<'a> {
                 self.collect_evidence_expr(*post, name, found, conflict);
                 self.collect_evidence_stmts(body, name, found, conflict);
             }
+            Stmt::ForEach { iterable, body, .. } => {
+                self.collect_evidence_expr(*iterable, name, found, conflict);
+                self.collect_evidence_stmts(body, name, found, conflict);
+            }
             Stmt::Return(value) => {
                 if let Some(value_id) = value {
                     self.collect_evidence_expr(*value_id, name, found, conflict);
