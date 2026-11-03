@@ -2,6 +2,25 @@
 
 Thank you for your interest in contributing to Druk. This document provides guidelines for participating in the project.
 
+## Development Setup
+
+1. Fork the repository, then clone your fork and add this repository as `upstream`:
+
+   ```bash
+   gh repo fork Etoile-Bleu/druk-lang-v2 --clone
+   ```
+
+2. Install the toolchain. On Linux, this installs the LLVM release CI uses and runs the full CI
+   check suite to confirm everything works:
+
+   ```bash
+   ./scripts/setup-dev.sh --check
+   ```
+
+   On Windows, follow the manual steps in the README's [Building](README.md#building) section.
+
+3. Keep your branch current with `git fetch upstream && git rebase upstream/main`.
+
 ## Git Workflow
 
 ### Branch Naming
