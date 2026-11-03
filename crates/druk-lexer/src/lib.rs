@@ -58,7 +58,12 @@ pub enum TokenKind {
     #[token("ནང་འཇུག་")]
     BuiltinInput,
 
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*")]
+    // ASCII letters/digits/underscore, or Tibetan consonants (ཀ-ཬ), vowel
+    // signs (ཱ-྄), subjoined consonants (ྐ-ྼ), and the tsheg syllable
+    // separator (་) once past the first character, so a real multi-syllable
+    // Dzongkha compound identifier like སློབ་ཕྲུག་གི་སྐར་གྲངས་ lexes as one
+    // token instead of failing one codepoint at a time.
+    #[regex("[a-zA-Z_ཀ-ཬཱ-྄ྐ-ྼ][a-zA-Z0-9_ཀ-ཬཱ-྄ྐ-ྼ་]*")]
     Ident,
     #[regex("[༠-༩]+")]
     Integer,
@@ -280,6 +285,28 @@ mod tests {
                 TokenKind::RBrace,
             ]
         );
+    }
+
+    #[test]
+    fn lexes_a_multi_syllable_dzongkha_compound_identifier_as_one_token() {
+        let source = "གྲངས་ སློབ་ཕྲུག་གི་སྐར་གྲངས་ = ༡༠;";
+        let (tokens, diagnostics) = tokenize(source);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected diagnostics: {diagnostics:?}"
+        );
+        let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::KwNumber,
+                TokenKind::Ident,
+                TokenKind::Eq,
+                TokenKind::Integer,
+                TokenKind::Semi,
+            ]
+        );
+        assert_eq!(tokens[1].text, "སློབ་ཕྲུག་གི་སྐར་གྲངས་");
     }
 
     #[test]
