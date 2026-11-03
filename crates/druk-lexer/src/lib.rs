@@ -92,6 +92,8 @@ pub enum TokenKind {
     Star,
     #[token("/")]
     Slash,
+    #[token("%")]
+    Percent,
     #[token("<")]
     Lt,
     #[token(">")]
@@ -264,6 +266,15 @@ mod tests {
                 TokenKind::Star,
                 TokenKind::Integer,
             ]
+        );
+    }
+
+    #[test]
+    fn lexes_percent_distinct_from_adjacent_integers() {
+        let source = "༡༠ % ༣";
+        assert_eq!(
+            kinds(source),
+            vec![TokenKind::Integer, TokenKind::Percent, TokenKind::Integer,]
         );
     }
 
