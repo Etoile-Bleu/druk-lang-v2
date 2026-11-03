@@ -1,2 +1,6 @@
+// This prints a greeting in English.
 བཀོད་ "Hello, Druk Lang!";
+
+/* This one prints a greeting in Dzongkha,
+   written across more than one line. */
 བཀོད་ "བདེ་ལེགས། (Tashi Delek)";
