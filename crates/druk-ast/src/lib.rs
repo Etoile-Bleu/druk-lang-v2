@@ -121,6 +121,11 @@ pub enum Stmt {
         post: ExprId,
         body: Vec<StmtId>,
     },
+    ForEach {
+        var: String,
+        iterable: ExprId,
+        body: Vec<StmtId>,
+    },
     Break,
     Continue,
     Return(Option<ExprId>),
