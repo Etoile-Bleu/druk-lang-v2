@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Druk Benchmarks</title>
+<!--
+  Template for benches/results/report.html. benches/run.sh replaces the
+  __BENCH_DATA__ line below with the hyperfine JSON exports. Don't edit the
+  generated report; edit this file.
+-->
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --card: #ffffff;
+    --border: #e3e2de;
+    --text: #1f1f1d;
+    --muted: #6b6a66;
+    --druk: #c2410c;
+    --other: #3b6ea5;
+    --ref: #a8a7a2;
+    --whisker: #1f1f1d;
+    --grid: #ecebe7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615;
+      --card: #1f1f1d;
+      --border: #33322f;
+      --text: #ecebe7;
+      --muted: #9c9b96;
+      --druk: #f08a4b;
+      --other: #6fa0d8;
+      --ref: #5d5c58;
+      --whisker: #ecebe7;
+      --grid: #2a2927;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+  .legend span::before {
+    content: ""; display: inline-block; width: 10px; height: 10px;
+    border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c);
+  }
+  section {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  h2 { font-size: 18px; margin: 0 0 12px; font-family: ui-monospace, monospace; }
+  svg { width: 100%; height: auto; display: block; overflow: visible; }
+  svg text { fill: var(--text); font-size: 12px; }
+  svg .muted { fill: var(--muted); }
+  .table-wrap { overflow-x: auto; margin-top: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  .tag {
+    font-size: 11px; color: var(--muted); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0 4px; margin-left: 6px;
+  }
+  .empty { color: var(--muted); }
+  footer { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Druk Benchmarks</h1>
+  <div class="meta" id="meta"></div>
+  <div class="legend">
+    <span style="--c: var(--druk)">Druk</span>
+    <span style="--c: var(--other)">Other interpreters</span>
+    <span style="--c: var(--ref)">Native references (C, Rust)</span>
+  </div>
+  <div id="tasks"></div>
+  <footer>
+    Mean wall-clock time per run, with ±1 standard deviation shown as whiskers. Lower is better.
+    C and Rust are ceiling references, not fair comparisons. See benches/README.md before drawing conclusions.
+  </footer>
+</main>
+<script>
+const BENCH_DATA = {}; const BENCH_META = {}; /*__BENCH_DATA__*/
+
+function kind(name) {
+  if (name.startsWith("druk")) return "druk";
+  if (name.endsWith("(reference)")) return "ref";
+  return "other";
+}
+
+function fmt(s) {
+  if (s == null) return "–";
+  if (s >= 1) return s.toFixed(2) + " s";
+  if (s >= 0.001) return (s * 1000).toFixed(1) + " ms";
+  return (s * 1e6).toFixed(0) + " µs";
+}
+
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function chart(rows) {
+  const labelW = 170, valueW = 80, W = 860, barH = 22, gap = 10, top = 4, axisH = 22;
+  const plotW = W - labelW - valueW;
+  const max = Math.max(...rows.map(r => r.mean + (r.stddev || 0)));
+  const x = v => labelW + (v / max) * plotW;
+  const H = top + rows.length * (barH + gap) + axisH;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+
+  for (let i = 0; i <= 4; i++) {
+    const v = (max * i) / 4, gx = x(v);
+    svg.appendChild(el("line", { x1: gx, x2: gx, y1: top, y2: H - axisH, stroke: "var(--grid)" }));
+    svg.appendChild(el("text", { x: gx, y: H - 6, "text-anchor": "middle", class: "muted" }, i === 0 ? "0" : fmt(v)));
+  }
+
+  rows.forEach((r, i) => {
+    const y = top + i * (barH + gap), cy = y + barH / 2;
+    const color = `var(--${r.kind})`;
+    svg.appendChild(el("text", { x: labelW - 10, y: cy + 4, "text-anchor": "end" }, r.name));
+    const bar = el("rect", { x: labelW, y, width: Math.max(1, x(r.mean) - labelW), height: barH, rx: 3, fill: color });
+    bar.appendChild(el("title", {}, `${r.name}: ${fmt(r.mean)} ± ${fmt(r.stddev)}`));
+    svg.appendChild(bar);
+    if (r.stddev) {
+      const lo = x(Math.max(0, r.mean - r.stddev)), hi = x(r.mean + r.stddev);
+      const w = { stroke: "var(--whisker)", "stroke-width": 1.5, opacity: 0.7 };
+      svg.appendChild(el("line", { x1: lo, x2: hi, y1: cy, y2: cy, ...w }));
+      svg.appendChild(el("line", { x1: lo, x2: lo, y1: cy - 5, y2: cy + 5, ...w }));
+      svg.appendChild(el("line", { x1: hi, x2: hi, y1: cy - 5, y2: cy + 5, ...w }));
+    }
+    svg.appendChild(el("text", { x: x(r.mean + (r.stddev || 0)) + 8, y: cy + 4 }, fmt(r.mean)));
+  });
+  return svg;
+}
+
+function table(rows) {
+  const fastest = rows[0].mean;
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const t = document.createElement("table");
+  t.innerHTML = "<thead><tr><th>Command</th><th>Mean</th><th>± σ</th><th>Min</th><th>Max</th><th>vs fastest</th></tr></thead>";
+  const body = document.createElement("tbody");
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = r.name;
+    if (r.kind === "ref") {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "reference";
+      name.appendChild(tag);
+    }
+    tr.appendChild(name);
+    const rel = r.mean / fastest;
+    for (const v of [fmt(r.mean), fmt(r.stddev), fmt(r.min), fmt(r.max), rel < 1.005 ? "fastest" : rel.toFixed(1) + "× slower"]) {
+      const td = document.createElement("td");
+      td.textContent = v;
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+  t.appendChild(body);
+  wrap.appendChild(t);
+  return wrap;
+}
+
+// Each task is the lines of its hyperfine CSV export. Handles both the
+// hyperfine 1.x columns (command,mean,stddev,...) and the 2.x ones
+// (command,time_wall_clock_unit,time_wall_clock_mean,...).
+function parseCsv(lines) {
+  const head = lines[0].split(",");
+  const col = k => {
+    const i = head.indexOf("time_wall_clock_" + k);
+    return i >= 0 ? i : head.indexOf(k);
+  };
+  const unit = head.indexOf("time_wall_clock_unit");
+  const scale = { s: 1, ms: 1e-3, us: 1e-6, "µs": 1e-6 };
+  return lines.slice(1).filter(l => l.trim()).map(l => {
+    const f = l.split(",");
+    const k = unit >= 0 ? scale[f[unit]] || 1 : 1;
+    const num = c => (c >= 0 && f[c] !== "" ? Number(f[c]) * k : null);
+    const name = f[0];
+    return { name, kind: kind(name), mean: num(col("mean")), stddev: num(col("stddev")), min: num(col("min")), max: num(col("max")) };
+  });
+}
+
+const meta = [];
+if (BENCH_META.generated) meta.push("Generated " + BENCH_META.generated);
+if (BENCH_META.host) meta.push(BENCH_META.host);
+document.getElementById("meta").textContent = meta.join(" · ");
+
+const root = document.getElementById("tasks");
+const names = Object.keys(BENCH_DATA).sort();
+if (names.length === 0) {
+  root.innerHTML = '<p class="empty">No results yet. Run <code>bash benches/run.sh</code>.</p>';
+}
+for (const task of names) {
+  const rows = parseCsv(BENCH_DATA[task]).sort((a, b) => a.mean - b.mean);
+  if (rows.length === 0) continue;
+  const s = document.createElement("section");
+  const h = document.createElement("h2");
+  h.textContent = task;
+  s.appendChild(h);
+  s.appendChild(chart(rows));
+  s.appendChild(table(rows));
+  root.appendChild(s);
+}
+</script>
+</body>
+</html>
