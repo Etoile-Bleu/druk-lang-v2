@@ -1,7 +1,7 @@
 use druk_ast::{ExprId, MatchArm, Pattern, Stmt, StmtId};
 use druk_diagnostics::Diagnostic;
 
-use crate::{lower_literal, BinOp, IrExpr, IrStmt, Lowerer};
+use crate::{lower_literal, BinOp, BuiltinOp, IrExpr, IrStmt, Lowerer};
 
 impl<'a> Lowerer<'a> {
     pub(crate) fn lower_block(&mut self, stmts: &[StmtId]) -> Vec<IrStmt> {
@@ -73,6 +73,61 @@ impl<'a> Lowerer<'a> {
                     init: init_ir,
                     cond,
                     post: post_ir,
+                    body: body_ir,
+                }
+            }
+            Stmt::ForEach {
+                var,
+                iterable,
+                body,
+            } => {
+                let iterable_ir = self.lower_expr(*iterable);
+                self.push_block_scope();
+                let arr_slot = self.declare_slot("$foreach_arr");
+                let idx_slot = self.declare_slot("$foreach_idx");
+                let var_slot = self.declare_slot(var);
+
+                // A plain `While` has no separate post-body step, so a
+                // `continue` inside `body` would skip straight back to the
+                // condition and never advance `idx_slot`, looping forever
+                // on the same element. `IrStmt::For` exists exactly to give
+                // `continue` a `post` step to land on instead; see
+                // `compile_for`'s own doc comment in druk-codegen-llvm.
+                let init = Box::new(IrStmt::Block(vec![
+                    IrStmt::Expr(IrExpr::SetLocal(arr_slot, Box::new(iterable_ir))),
+                    IrStmt::Expr(IrExpr::SetLocal(idx_slot, Box::new(IrExpr::ConstInt(0)))),
+                ]));
+                let cond = IrExpr::Binary(
+                    BinOp::Lt,
+                    Box::new(IrExpr::GetLocal(idx_slot)),
+                    Box::new(IrExpr::Builtin(
+                        BuiltinOp::Len,
+                        vec![IrExpr::GetLocal(arr_slot)],
+                    )),
+                );
+                let post = IrExpr::SetLocal(
+                    idx_slot,
+                    Box::new(IrExpr::Binary(
+                        BinOp::Add,
+                        Box::new(IrExpr::GetLocal(idx_slot)),
+                        Box::new(IrExpr::ConstInt(1)),
+                    )),
+                );
+
+                let mut body_ir = vec![IrStmt::Expr(IrExpr::SetLocal(
+                    var_slot,
+                    Box::new(IrExpr::ArrayGet(
+                        Box::new(IrExpr::GetLocal(arr_slot)),
+                        Box::new(IrExpr::GetLocal(idx_slot)),
+                    )),
+                ))];
+                body_ir.extend(self.lower_block(body));
+                self.pop_block_scope();
+
+                IrStmt::For {
+                    init,
+                    cond,
+                    post,
                     body: body_ir,
                 }
             }
