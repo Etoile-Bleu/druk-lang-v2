@@ -10,7 +10,7 @@
 ![Platforms](https://img.shields.io/badge/platforms-Linux_%7C_Windows-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-**[Language reference](docs/dzongkha_reference.md) ([EN](docs/dzongkha_reference_en.md)) · [Font & keyboard setup](docs/dzongkha_input_setup_en.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)**
+**[Language reference](docs/dzongkha_reference.md) ([EN](docs/dzongkha_reference_en.md)) · [Font & keyboard setup](docs/dzongkha_input_setup_en.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md) · [Acknowledgments](ACKNOWLEDGMENTS.md)**
 
 <img src="docs/assets/terminal.svg" alt="A terminal running druk run on four bundled examples: hello world printing Hello, Druk Lang! and a Dzongkha greeting, recursion printing 13, arrays printing 1, 5, 99, and the combined demo printing 12 and Math works!" width="640">
 
