@@ -27,7 +27,7 @@ enum Command {
         args: Vec<String>,
     },
     /// Compile a .druk file to a standalone native executable. Requires
-    /// LLVM's `llc` and Rust's `rustc` on `PATH`.
+    /// Rust's `rustc` on `PATH` to link it.
     Build {
         file: PathBuf,
         /// Where to write the executable. Defaults to the input file's
