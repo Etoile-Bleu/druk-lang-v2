@@ -159,7 +159,7 @@ impl<'src> Parser<'src> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use druk_ast::{BaseType, Expr, Literal, Pattern, Stmt};
+    use druk_ast::{BaseType, BinOp, Expr, Literal, Pattern, Stmt};
 
     fn parse_ok(source: &str) -> Ast {
         let (ast, diagnostics) = parse(source);
@@ -195,6 +195,25 @@ mod tests {
             Stmt::Print(expr) => match ast.expr(*expr) {
                 Expr::Literal(Literal::Str(s)) => assert_eq!(s, "Hello, Druk Lang!"),
                 other => panic!("expected string literal, got {other:?}"),
+            },
+            other => panic!("expected Print statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_modulo_at_multiplicative_precedence() {
+        let ast = parse_ok("བཀོད་ ༡༠ % ༣ + ༡;");
+        match ast.stmt(ast.top_level[0]) {
+            Stmt::Print(expr) => match ast.expr(*expr) {
+                Expr::Binary {
+                    op: BinOp::Add,
+                    lhs,
+                    ..
+                } => match ast.expr(*lhs) {
+                    Expr::Binary { op: BinOp::Rem, .. } => {}
+                    other => panic!("expected Rem on the left of Add, got {other:?}"),
+                },
+                other => panic!("expected a top-level Add, got {other:?}"),
             },
             other => panic!("expected Print statement, got {other:?}"),
         }

@@ -79,7 +79,7 @@ Tous les opérateurs utilisent des symboles ASCII standard.
 
 | Opérateur | Description |
 |---|---|
-| `+` `-` `*` `/` | Arithmétique entière |
+| `+` `-` `*` `/` `%` | Arithmétique entière (`%` : reste de la division) |
 | `==` `!=` | Égalité |
 | `<` `<=` `>` `>=` | Comparaison |
 | `&&` `\|\|` | Logique ET / OU |
