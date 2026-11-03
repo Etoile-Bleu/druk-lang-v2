@@ -11,6 +11,7 @@
 //! agree on the ABI without either side needing type-directed codegen.
 
 mod codegen;
+mod object;
 mod runtime_fns;
 
 use std::path::Path;
@@ -109,18 +110,8 @@ pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
 /// executable is the caller's job (see `druk-driver`), since it needs a
 /// system linker this crate has no reason to know how to invoke.
 ///
-/// This shells out to `llc` (LLVM's standalone static compiler, which must
-/// be on `PATH`) to turn the module into an object file, rather than
-/// using inkwell's own `TargetMachine::write_to_file`/
-/// `write_to_memory_buffer`: that binding crashes non-deterministically on
-/// this backend's own generated modules, independently of LLVM version,
-/// `RelocMode`/`CodeModel`, or output method, confirmed by feeding the
-/// exact same IR to `llc` directly instead, which compiles it correctly
-/// and reliably every time. This points at a bug in inkwell's `TargetMachine`
-/// bindings for this LLVM version rather than in the generated IR itself or
-/// in LLVM's own backend, so this backend goes around it by writing
-/// bitcode (a format inkwell's own, simpler serialization is reliable for)
-/// and asking the real `llc` binary to do the risky part instead.
+/// On Windows MSVC this relies on `druk` itself being built with a static
+/// C runtime, which `build.rs` enforces: see that file for why.
 pub fn compile_to_object(module: &IrModule, object_path: &Path) -> Result<(), Diagnostic> {
     let context = Context::create();
     let llvm_module = context.create_module("druk");
@@ -176,54 +167,7 @@ pub fn compile_to_object(module: &IrModule, object_path: &Path) -> Result<(), Di
         MainKind::Native,
     )?;
 
-    let bitcode_path = object_path.with_extension("bc");
-    if !llvm_module.write_bitcode_to_path(&bitcode_path) {
-        return Err(Diagnostic::error(format!(
-            "failed to write bitcode to {}",
-            bitcode_path.display()
-        )));
-    }
-
-    // Deliberately "generic" rather than the exact host CPU: the point of
-    // a native build is a binary that still runs on a different machine
-    // than the one that compiled it, and tuning codegen to the build
-    // machine's own CPU risks an illegal-instruction crash on an older
-    // one. A later `--target-cpu` flag can offer the tighter,
-    // build-machine-only tuning for whoever explicitly wants it.
-    // `-relocation-model=pic`: `rustc`'s own final link defaults to a
-    // position-independent executable (`-pie`) on Linux, which rejects an
-    // object file compiled with `llc`'s own default (non-PIC) relocation
-    // model with "relocation R_X86_64_32 cannot be used against local
-    // symbol". Windows PE objects aren't affected by this distinction
-    // either way, so this is safe to pass unconditionally rather than
-    // branching on target OS.
-    let result = std::process::Command::new("llc")
-        .args([
-            "-filetype=obj",
-            "-mcpu=generic",
-            "-O2",
-            "-relocation-model=pic",
-        ])
-        .arg(&bitcode_path)
-        .arg("-o")
-        .arg(object_path)
-        .output();
-
-    let _ = std::fs::remove_file(&bitcode_path);
-
-    let output = result.map_err(|err| {
-        Diagnostic::error(format!(
-            "failed to run llc (is LLVM's `llc` on PATH?): {err}"
-        ))
-    })?;
-    if !output.status.success() {
-        return Err(Diagnostic::error(format!(
-            "llc failed to emit a native object file:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    Ok(())
+    object::emit_object(&llvm_module, object_path)
 }
 
 #[cfg(test)]
@@ -400,6 +344,44 @@ mod tests {
                 let _ = std::fs::remove_file(&object_path);
             }
         }
+    }
+
+    fn lower_source(source: &str) -> IrModule {
+        let (ast, parse_diagnostics) = druk_parser::parse(source);
+        assert!(parse_diagnostics.is_empty());
+        let hir = druk_hir::check(ast).expect("source should type-check");
+        druk_ir::lower(&hir).expect("hir should lower")
+    }
+
+    fn temp_object_path(label: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("druk_object_{label}_{}.o", std::process::id()));
+        path
+    }
+
+    #[test]
+    fn emitted_object_starts_with_the_native_object_format_header() {
+        let ir = lower_source(r#"བཀོད་ "hi";"#);
+        let object_path = temp_object_path("header");
+        compile_to_object(&ir, &object_path).expect("object should be emitted");
+        let bytes = std::fs::read(&object_path).expect("object file is readable");
+        let _ = std::fs::remove_file(&object_path);
+
+        if cfg!(target_os = "windows") {
+            assert_eq!(&bytes[..2], &[0x64, 0x86], "expected an x86-64 COFF header");
+        } else {
+            assert_eq!(&bytes[..4], b"\x7fELF", "expected an ELF header");
+        }
+    }
+
+    #[test]
+    fn emitting_many_objects_in_one_process_is_stable() {
+        let ir = lower_source(r#"བཀོད་ "hi";"#);
+        let object_path = temp_object_path("repeat");
+        for _ in 0..50 {
+            compile_to_object(&ir, &object_path).expect("object should be emitted");
+        }
+        let _ = std::fs::remove_file(&object_path);
     }
 
     #[test]

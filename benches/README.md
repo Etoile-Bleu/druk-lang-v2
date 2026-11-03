@@ -21,7 +21,7 @@ deviation, not a single cherry-picked number).
 - **LuaJIT, PyPy and V8 are deliberately not included.** Comparing a brand-new
   educational compiler against implementations with over a decade of optimization work would
   mostly measure that gap, not anything about Druk's own design. (A 2026 study found LuaJIT
-  roughly 7x faster than the best plain Lua interpreter on the same workload — i.e. even "Lua vs
+  roughly 7x faster than the best plain Lua interpreter on the same workload, so even "Lua vs
   Lua" varies by 7x on implementation maturity alone, before language design enters into it.)
 - **`druk run` is JIT-compiled via LLVM on every single invocation.** Its numbers are whole-process
   wall time, so they include LLVM JIT compilation on every run, not just steady-state execution.
@@ -32,8 +32,8 @@ deviation, not a single cherry-picked number).
   build`, then just executed**, the same way the C column is measured. It isolates generated-code
   speed from JIT compile time, and is the fairer of the two Druk columns to compare against C.
   The two backends do not currently use the same optimization level: `druk run`'s JIT uses
-  `OptimizationLevel::None`, while `druk build` already shells out to `llc -O2` (see
-  `druk-codegen-llvm`). So the gap between them below is a mix of JIT-startup overhead and a real
+  `OptimizationLevel::None`, while `druk build` already generates code at LLVM's default (`-O2`)
+  level (see `druk-codegen-llvm`). So the gap between them below is a mix of JIT-startup overhead and a real
   codegen-quality difference, not purely the former; there is no way yet to control either
   backend's optimization level from the CLI, which is tracked separately.
 
@@ -72,7 +72,7 @@ how to install them:
 | Language | Needs | Override with |
 |---|---|---|
 | `druk-jit` | the release `druk` binary | `DRUK` |
-| `druk-native` | the release `druk` binary, LLVM's `llc` on `PATH` | `DRUK` |
+| `druk-native` | the release `druk` binary, `rustc` on `PATH` | `DRUK` |
 | `python` | `python3` | `PYTHON` |
 | `lua` | `lua` | `LUA` |
 | `c` | `gcc` | `CC` |
@@ -168,7 +168,7 @@ practice than CPython's own list growth and boxed-integer overhead at this size.
 - `druk build`'s native binaries are consistently at or ahead of `druk run`'s JIT, and the gap
   widens for short-running programs, where JIT compile time at startup is a larger fraction of
   total wall time. Part of this gap is also a real codegen-quality difference: `druk build`
-  already shells out to `llc -O2`, while `druk run`'s JIT uses `OptimizationLevel::None`. Neither
+  already generates code at LLVM's default (`-O2`) level, while `druk run`'s JIT uses `OptimizationLevel::None`. Neither
   is currently controllable from the CLI; exposing and unifying an optimization-level flag across
   both backends is tracked as a follow-up.
 - Function-call overhead is Druk's clearest current weakness relative to even a plain, pre-JIT
