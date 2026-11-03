@@ -97,10 +97,10 @@ chmod +x druk && sudo mv druk /usr/local/bin/
 Invoke-WebRequest -Uri "https://github.com/Etoile-Bleu/druk-lang-v2/releases/latest/download/druk-windows-x86_64.exe" -OutFile druk.exe
 ```
 
-This covers `druk run` (the LLVM JIT) completely: LLVM is statically linked into the binary.
-`druk build` (ahead-of-time native compilation) additionally shells out to `llc` and `rustc` at
-run time, so it still needs an LLVM 22 install and a Rust toolchain on `PATH` even with a
-downloaded binary; see [Building](#building) below for that setup.
+This covers `druk run` (the LLVM JIT) completely: LLVM is statically linked into the binary, so
+no LLVM install is needed to run `druk` at all. `druk build` (ahead-of-time native compilation)
+generates its native code inside the binary too, but still links the finished executable by
+shelling out to `rustc` at run time, so it needs a Rust toolchain on `PATH`.
 
 ## Quick start
 
@@ -140,8 +140,8 @@ way.
 The full pipeline (lexer, parser, HIR, IR, LLVM codegen, a real mark-and-sweep GC) runs end to end
 on both Linux and Windows, verified by CI, through either of two backends: `druk run` JIT-executes
 a `.druk` file directly, and `druk build` compiles it ahead-of-time to a standalone native
-executable (via `llc` for object emission and `rustc` for the final link against `druk-runtime`,
-both of which need to be on `PATH`; see Building below). All 21 bundled `examples/*.druk` programs
+executable (object emission happens inside `druk` itself; the final link against `druk-runtime`
+shells out to `rustc`, which needs to be on `PATH`). All 21 bundled `examples/*.druk` programs
 compile and execute correctly through both paths, including structs, closures that capture a
 variable from their immediately enclosing scope, and the Dzongkha builtins `len`, `push`, `pop`,
 `typeof`, `input`, `argv`, and `argc` (`argv`/`argc` reflect the program's own real command-line
@@ -163,7 +163,7 @@ Requires a recent stable Rust toolchain, plus LLVM 22 for `druk-codegen-llvm` (t
 depends on it, via `inkwell`).
 
 On Linux, one script does all of this for you. It installs the exact LLVM release CI uses into
-`~/.cache/druk/`, prints the two environment variables to add to your shell profile, and with
+`~/.cache/druk/`, prints the environment variable to add to your shell profile, and with
 `--check` runs the same format, lint, and test steps CI runs:
 
 ```sh
@@ -174,21 +174,37 @@ To set things up by hand instead (on Windows, or to use an LLVM you already have
 
 1. Install LLVM 22 with static libraries (a prebuilt `clang+llvm-22.*`/`LLVM-22.*` archive from
    [the LLVM releases page](https://github.com/llvm/llvm-project/releases) works; it must ship
-   `bin/llvm-config` and `bin/llc`).
-2. Point `llvm-sys` at it: `export LLVM_SYS_221_PREFIX=/path/to/llvm-22.x`, and add its `bin/`
-   directory to `PATH` too: `druk build` (native compilation) shells out to `llc` at *run* time,
-   not just at `druk-codegen-llvm`'s own build time (`llvm-sys` only needs the prefix env var; the
-   `druk` binary itself needs `llc` findable on `PATH` to compile anything). `druk build` also
-   shells out to `rustc` to link the final executable, which a normal Rust toolchain install
-   already puts on `PATH`.
-3. On Windows, some prebuilt LLVM archives list `xml2s.lib` as a system dependency via
-   `llvm-config --system-libs` without actually shipping it, which fails the link step with
-   `LNK1181`. Work around it with an empty stub library on the linker search path:
+   `bin/llvm-config`).
+2. Point `llvm-sys` at it: `export LLVM_SYS_221_PREFIX=/path/to/llvm-22.x`. LLVM is only needed
+   to *build* `druk`, never to run it, so its `bin/` directory does not need to be on `PATH`.
+   `druk build` links the final executable by shelling out to `rustc`, which a normal Rust
+   toolchain install already puts on `PATH`.
+3. On Windows, three more things are needed, all set in one untracked, machine-specific
+   `.cargo/config.toml` at the repository root:
+   - The prebuilt LLVM libraries use the static C runtime, so `druk` must be built with
+     `-C target-feature=+crt-static`. Rust's default is the dynamic runtime, and mixing the two
+     corrupts memory and crashes intermittently (see
+     [inkwell#736](https://github.com/TheDan64/inkwell/issues/736)); the build refuses to
+     continue without it.
+   - Under `crt-static`, `llvm-sys` links LLVM's system libraries (`psapi`, `shell32`, ...) as
+     static libraries, so the Windows SDK's library directory must be on rustc's `-L` path.
+   - Some prebuilt LLVM archives list `xml2s.lib` as a system dependency via
+     `llvm-config --system-libs` without actually shipping it, which fails the link step with
+     `LNK1181`. Work around it with an empty stub library on the linker search path:
    ```sh
    # from an MSVC developer shell, in some empty directory:
    echo "" > empty.c && cl.exe /c empty.c
    lib.exe /OUT:xml2s.lib empty.obj
-   export RUSTFLAGS="-L /path/to/that/directory"
+   ```
+   Then point cargo at all three (adjust the two paths to your machine):
+   ```toml
+   # .cargo/config.toml
+   [build]
+   rustflags = [
+       "-L", "C:/path/to/that/directory",
+       "-L", "C:/Program Files (x86)/Windows Kits/10/Lib/<version>/um/x64",
+       "-C", "target-feature=+crt-static",
+   ]
    ```
 4. Build and test as usual:
    ```sh
