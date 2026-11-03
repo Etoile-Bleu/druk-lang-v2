@@ -217,6 +217,14 @@ impl<'ctx> CodeGen<'ctx> {
                 ));
                 self.make_value_from_int(TAG_NUMBER, result)
             }
+            BinOp::Rem => {
+                let result = unwrap_build(self.builder.build_int_signed_rem(
+                    self.extract_payload(lhs_value),
+                    self.extract_payload(rhs_value),
+                    "rem",
+                ));
+                self.make_value_from_int(TAG_NUMBER, result)
+            }
             BinOp::Lt => self.compile_comparison(IntPredicate::SLT, lhs_value, rhs_value),
             BinOp::LtEq => self.compile_comparison(IntPredicate::SLE, lhs_value, rhs_value),
             BinOp::Gt => self.compile_comparison(IntPredicate::SGT, lhs_value, rhs_value),

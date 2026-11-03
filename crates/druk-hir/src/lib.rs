@@ -429,7 +429,7 @@ impl<'a> Checker<'a> {
 
     fn check_binary(&mut self, op: BinOp, lhs: &Type, rhs: &Type) -> Type {
         match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 self.expect_type(lhs, &Type::Number, "arithmetic");
                 self.expect_type(rhs, &Type::Number, "arithmetic");
                 Type::Number
@@ -558,6 +558,19 @@ mod tests {
     #[test]
     fn reports_a_type_mismatch_in_arithmetic() {
         let result = check_source("བདེན་རྫུན་ flag = བདེན་པ་; བཀོད་ flag + ༡;");
+        let diagnostics = result.expect_err("expected a diagnostic");
+        assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
+    }
+
+    #[test]
+    fn checks_modulo_between_two_numbers_cleanly() {
+        let result = check_source("གྲངས་ remainder = ༡༠ % ༣; བཀོད་ remainder;");
+        assert!(result.is_ok(), "unexpected diagnostics: {result:?}");
+    }
+
+    #[test]
+    fn reports_a_type_mismatch_in_modulo() {
+        let result = check_source("བདེན་རྫུན་ flag = བདེན་པ་; བཀོད་ flag % ༡;");
         let diagnostics = result.expect_err("expected a diagnostic");
         assert!(diagnostics.iter().any(|d| d.message.contains("needs")));
     }
