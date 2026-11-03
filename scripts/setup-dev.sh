@@ -134,9 +134,7 @@ echo "LLVM $llvm_version is ready."
 
 shell_configured=false
 if [ "${LLVM_SYS_221_PREFIX:-}" = "$llvm_dir" ]; then
-    case ":$PATH:" in
-        *":$llvm_dir/bin:"*) shell_configured=true ;;
-    esac
+    shell_configured=true
 fi
 
 if [ "$shell_configured" = true ]; then
@@ -145,7 +143,6 @@ else
     echo "Add these lines to your shell profile (~/.bashrc, ~/.zshrc, ...) and open a new terminal:"
     echo ""
     echo "  export LLVM_SYS_221_PREFIX=\"$llvm_dir\""
-    echo "  export PATH=\"\$LLVM_SYS_221_PREFIX/bin:\$PATH\""
 fi
 
 if [ "$run_checks" = false ]; then
@@ -155,7 +152,6 @@ if [ "$run_checks" = false ]; then
 fi
 
 export LLVM_SYS_221_PREFIX="$llvm_dir"
-export PATH="$llvm_dir/bin:$PATH"
 cd "$repo_root"
 
 echo ""
