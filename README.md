@@ -99,8 +99,10 @@ Invoke-WebRequest -Uri "https://github.com/Etoile-Bleu/druk-lang-v2/releases/lat
 
 This covers `druk run` (the LLVM JIT) completely: LLVM is statically linked into the binary, so
 no LLVM install is needed to run `druk` at all. `druk build` (ahead-of-time native compilation)
-generates its native code inside the binary too, but still links the finished executable by
-shelling out to `rustc` at run time, so it needs a Rust toolchain on `PATH`.
+needs neither LLVM nor a Rust toolchain either: it generates the native code inside the binary and
+links the executable with your platform's own linker, which is the Visual Studio Build Tools (C++
+workload) on Windows and a C compiler such as `gcc` on Linux (`sudo apt install build-essential`).
+On Windows, the programs it builds do not need the Visual C++ Redistributable.
 
 ## Quick start
 
@@ -141,7 +143,8 @@ The full pipeline (lexer, parser, HIR, IR, LLVM codegen, a real mark-and-sweep G
 on both Linux and Windows, verified by CI, through either of two backends: `druk run` JIT-executes
 a `.druk` file directly, and `druk build` compiles it ahead-of-time to a standalone native
 executable (object emission happens inside `druk` itself; the final link against `druk-runtime`
-shells out to `rustc`, which needs to be on `PATH`). All 21 bundled `examples/*.druk` programs
+uses the platform's own linker: `link.exe` on Windows, the system C compiler on Linux). All 21
+bundled `examples/*.druk` programs
 compile and execute correctly through both paths, including structs, closures that capture a
 variable from their immediately enclosing scope, and the Dzongkha builtins `len`, `push`, `pop`,
 `typeof`, `input`, `argv`, and `argc` (`argv`/`argc` reflect the program's own real command-line
@@ -177,8 +180,8 @@ To set things up by hand instead (on Windows, or to use an LLVM you already have
    `bin/llvm-config`).
 2. Point `llvm-sys` at it: `export LLVM_SYS_221_PREFIX=/path/to/llvm-22.x`. LLVM is only needed
    to *build* `druk`, never to run it, so its `bin/` directory does not need to be on `PATH`.
-   `druk build` links the final executable by shelling out to `rustc`, which a normal Rust
-   toolchain install already puts on `PATH`.
+   `druk build` links the final executable with the platform's own linker (the same one a normal
+   Rust toolchain needs: the Visual Studio Build Tools on Windows, a C compiler on Linux).
 3. On Windows, three more things are needed, all set in one untracked, machine-specific
    `.cargo/config.toml` at the repository root:
    - The prebuilt LLVM libraries use the static C runtime, so `druk` must be built with

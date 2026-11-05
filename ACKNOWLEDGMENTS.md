@@ -86,6 +86,7 @@ Every crate this project links against, and why it was chosen:
 | [`thiserror`](https://docs.rs/thiserror) | Structured error types across the pipeline | Standard, low-ceremony derive for Rust error enums; keeps every user-facing failure a typed `Diagnostic` instead of a panic. |
 | [`clap`](https://docs.rs/clap) | The `druk` CLI's argument parsing | The de facto standard Rust CLI argument parser; keeps the `druk` binary itself free of hand-rolled arg parsing so it stays a thin driver wrapper, per `ARCHITECTURE.md`. |
 | [`tracing`](https://docs.rs/tracing) / [`tracing-subscriber`](https://docs.rs/tracing-subscriber) | Structured logging through the pipeline | Standard structured-logging pair for Rust, chosen over plain `log` for span-based context across compiler passes. |
+| [`find-msvc-tools`](https://docs.rs/find-msvc-tools) | `druk-driver`'s link step on Windows | Finds `link.exe` and the environment it needs (`LIB`, `PATH`) through the Visual Studio installation records. It is the same discovery `rustc` and the `cc` crate use, so `druk build` works from a plain terminal and no Rust toolchain is needed to link. |
 
 ## Research that shaped specific decisions
 
@@ -125,6 +126,13 @@ Every crate this project links against, and why it was chosen:
   and `llvm-sys` itself ties its system-library linking to `crt-static` in its
   `build.rs` (repository: [taricorp/llvm-sys.rs](https://gitlab.com/taricorp/llvm-sys.rs)), which is
   what makes this the supported combination rather than a workaround.
+- **Linking without a Rust toolchain**: `druk build` runs the platform's linker directly, and
+  gets the native libraries the runtime needs from `rustc --print=native-static-libs` at build
+  time instead of hard-coding them. On Windows the runtime is linked against the static C
+  runtime, so built programs do not import the Visual C++ runtime DLLs; the choice between
+  static and dynamic is the one described in the
+  [Rust reference's linkage chapter](https://doc.rust-lang.org/reference/linkage.html), which
+  also recommends inspecting the resulting binary, as the project's tests do.
 
 ## What this file does not claim
 

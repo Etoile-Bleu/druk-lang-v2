@@ -13,7 +13,12 @@
 //! time makes `druk build` work from any standalone copy of the `druk`
 //! binary, which is the whole point of distributing a single executable.
 //!
-//! A nested `cargo build -p druk-runtime` run against a target directory
+//! The same nested build also asks rustc which native libraries that static
+//! library needs at link time (`--print=native-static-libs`), and embeds the
+//! list alongside it, so `link.rs` passes exactly what the runtime was built
+//! against instead of guessing per platform.
+//!
+//! A nested `cargo rustc -p druk-runtime` run against a target directory
 //! scoped to this crate's own `OUT_DIR` is used instead of trying to
 //! locate the hash-suffixed artifact the outer build already produces:
 //! Cargo only uplifts a crate's compiled artifact to a clean, unhashed
@@ -55,21 +60,6 @@ fn main() {
 
     let embed_target_dir = out_dir.join("druk-runtime-embed");
 
-    let status = Command::new(&cargo)
-        .current_dir(&workspace_root)
-        .args(["build", "--release", "--locked", "-p", "druk-runtime"])
-        .arg("--target")
-        .arg(&target)
-        .arg("--target-dir")
-        .arg(&embed_target_dir)
-        .status()
-        .expect("failed to invoke cargo to build druk-runtime for embedding");
-
-    assert!(
-        status.success(),
-        "building druk-runtime for embedding failed (see output above)"
-    );
-
     let lib_name = if target.contains("msvc") {
         "druk_runtime.lib"
     } else {
@@ -79,16 +69,46 @@ fn main() {
         .join(&target)
         .join("release")
         .join(lib_name);
+
+    // rustc only prints `native-static-libs` when it actually runs, and cargo
+    // skips running it when its fingerprint says nothing changed. Removing the
+    // artifact makes cargo notice it is missing and rebuild it.
+    let _ = std::fs::remove_file(lib_path);
+
+    let output = Command::new(&cargo)
+        .current_dir(&workspace_root)
+        .args(["rustc", "--color", "never", "--release", "--locked"])
+        .args(["-p", "druk-runtime", "--lib", "--crate-type", "staticlib"])
+        .arg("--target")
+        .arg(&target)
+        .arg("--target-dir")
+        .arg(&embed_target_dir)
+        .args(["--", "--print=native-static-libs"])
+        .output()
+        .expect("failed to invoke cargo to build druk-runtime for embedding");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "building druk-runtime for embedding failed:\n{stderr}"
+    );
     assert!(
         lib_path.exists(),
         "expected {} to exist after building druk-runtime",
         lib_path.display()
     );
 
+    let native_libs = stderr
+        .lines()
+        .find_map(|line| line.split_once("native-static-libs:"))
+        .map(|(_, libs)| libs.trim().to_string())
+        .expect("rustc did not report the native libraries druk-runtime needs");
+
     println!(
         "cargo:rustc-env=DRUK_RUNTIME_STATICLIB={}",
         lib_path.display()
     );
+    println!("cargo:rustc-env=DRUK_RUNTIME_NATIVE_LIBS={native_libs}");
     // Re-run only when druk-runtime's own source (or this workspace's lock
     // file, which pins its transitive dependencies) actually changes, not
     // on every build.

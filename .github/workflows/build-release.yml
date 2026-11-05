@@ -141,11 +141,13 @@ jobs:
 
           ### What this binary does and does not need
 
-          LLVM is statically linked into this binary, so neither \`druk run\` (the
-          JIT) nor the code generation half of \`druk build\` needs an LLVM install.
-          \`druk build\` (ahead-of-time native compilation) still links the finished
-          executable by shelling out to \`rustc\` at run time, so it needs a Rust
-          toolchain on \`PATH\`. This binary alone is enough for \`druk run\`.
+          This binary is self-contained: LLVM is statically linked in, so neither
+          \`druk run\` (the JIT) nor \`druk build\` (ahead-of-time native
+          compilation) needs LLVM or a Rust toolchain installed. \`druk build\`
+          only needs the platform's own linker to create the executable: the
+          Visual Studio Build Tools (C++ workload) on Windows, a C compiler such as
+          \`gcc\` on Linux. Programs it builds on Windows do not need the Visual
+          C++ Redistributable.
 
           EOF
 
@@ -195,16 +197,29 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "Hello, Druk Lang!"
 
-      - uses: dtolnay/rust-toolchain@stable
-        # druk build links the final executable by shelling out to rustc.
-        # No LLVM install here on purpose: object emission is in-process, so
-        # a missing llc would otherwise go unnoticed.
+      - name: Take every Rust toolchain off PATH
+        # The runner image ships one. druk build must not need it, so make a
+        # silent dependency on rustc fail this job instead of passing by luck.
+        run: |
+          clean=""
+          IFS=:
+          for dir in $PATH; do
+            if [ -x "$dir/rustc" ] || [ -x "$dir/cargo" ]; then continue; fi
+            clean="${clean:+$clean:}$dir"
+          done
+          unset IFS
+          echo "PATH=$clean" >> "$GITHUB_ENV"
+
+      - name: No rustc and no LLVM are reachable
+        run: |
+          ! command -v rustc
+          ! command -v llc
 
       - name: Native (druk build) produces the same output as the JIT
         # Confirms the released binary's druk build subcommand actually
         # works end to end (compile_to_object + link against
-        # druk-runtime) with no LLVM installed, not just that the binary
-        # starts.
+        # druk-runtime) with neither LLVM nor Rust installed, not just that
+        # the binary starts.
         run: |
           jit_output=$(bin/druk-linux-x86_64 run examples/01_hello.druk)
           bin/druk-linux-x86_64 build examples/01_hello.druk -o /tmp/hello_native
@@ -212,3 +227,55 @@ jobs:
           echo "jit: $jit_output"
           echo "native: $native_output"
           [ "$jit_output" = "$native_output" ]
+
+  smoke-test-windows:
+    name: Smoke test (Windows, JIT + native)
+    runs-on: windows-latest
+    needs: github-release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: druk-windows-x86_64
+          path: bin/
+
+      - name: Take every Rust toolchain off PATH
+        # The runner image ships one. druk build must not need it.
+        shell: pwsh
+        run: |
+          $clean = ($env:PATH -split ';') | Where-Object {
+            $_ -and -not (Test-Path (Join-Path $_ 'rustc.exe')) -and -not (Test-Path (Join-Path $_ 'cargo.exe'))
+          }
+          "PATH=$($clean -join ';')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: No rustc and no LLVM are reachable
+        shell: pwsh
+        run: |
+          if (Get-Command rustc -ErrorAction SilentlyContinue) { throw 'rustc is still on PATH' }
+          if (Get-Command llc -ErrorAction SilentlyContinue) { throw 'llc is on PATH' }
+
+      - name: Native (druk build) produces the same output as the JIT
+        shell: pwsh
+        run: |
+          Copy-Item bin/druk-windows-x86_64 druk.exe
+          .\druk.exe --version
+          $jit = (.\druk.exe run examples/01_hello.druk) -join "`n"
+          .\druk.exe build examples/01_hello.druk -o hello_native.exe
+          if ($LASTEXITCODE -ne 0) { throw 'druk build failed' }
+          $native = (.\hello_native.exe) -join "`n"
+          Write-Host "jit: $jit"
+          Write-Host "native: $native"
+          if ($jit -ne $native) { throw 'native output differs from the JIT output' }
+
+      - name: The built program does not need the Visual C++ Redistributable
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("$PWD\hello_native.exe")
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          foreach ($dll in 'VCRUNTIME140', 'api-ms-win-crt-') {
+            if ($text -match [regex]::Escape($dll)) { throw "hello_native.exe imports $dll" }
+          }

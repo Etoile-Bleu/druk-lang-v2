@@ -1,29 +1,38 @@
 //! Links a native object file against an embedded copy of the
-//! `druk-runtime` static library into a standalone executable, by
-//! shelling out to `rustc` itself rather than a system linker directly.
-//! `rustc` already knows how to find and invoke the right linker for this
-//! host (including its own bundled `rust-lld` on a machine with no
-//! separate linker installed) and which native system libraries a Rust
-//! static library needs linked alongside it, which this crate has no
-//! reason to duplicate.
+//! `druk-runtime` static library into a standalone executable, by running
+//! the platform's own linker directly: `link.exe` on Windows, the system C
+//! compiler driver on Unix. No Rust toolchain is needed on the machine that
+//! runs `druk build`.
 //!
-//! The static library's bytes are embedded into the `druk` binary itself
-//! at compile time (see `build.rs`), rather than searched for on disk
-//! next to the running executable: a `druk` binary copied anywhere other
-//! than its own `cargo build` output tree (every binary this project
-//! distributes through GitHub Releases, for instance) would otherwise
-//! have nothing to link `druk build`'s output against.
+//! The static library's bytes, and the list of native libraries rustc said
+//! it needs when it was built, are embedded into the `druk` binary itself at
+//! compile time (see `build.rs`), rather than searched for on disk next to
+//! the running executable: a `druk` binary copied anywhere other than its
+//! own `cargo build` output tree (every binary this project distributes
+//! through GitHub Releases, for instance) would otherwise have nothing to
+//! link `druk build`'s output against.
 
+use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::Output;
+
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows;
+
+#[cfg(unix)]
+use unix as platform;
+#[cfg(windows)]
+use windows as platform;
 
 /// Baked in by `build.rs`, which compiles `druk-runtime` as a standalone
-/// static library into a path under this crate's own `OUT_DIR` and
-/// exposes it via this env var, rather than relying on the hash-suffixed
-/// copy Cargo separately produces as a side effect of the ordinary
-/// workspace build (that copy sits next to the `druk` binary only inside
-/// a full `cargo build` output tree, see `build.rs`'s own module doc).
+/// static library into a path under this crate's own `OUT_DIR`.
 static RUNTIME_STATICLIB: &[u8] = include_bytes!(env!("DRUK_RUNTIME_STATICLIB"));
+
+/// What `rustc --print=native-static-libs` reported for that same build, in
+/// the syntax the platform's linker takes (`-lm -ldl` or `kernel32.lib`).
+const RUNTIME_NATIVE_LIBS: &str = env!("DRUK_RUNTIME_NATIVE_LIBS");
 
 #[derive(Debug, thiserror::Error)]
 pub enum LinkError {
@@ -31,69 +40,56 @@ pub enum LinkError {
     Io {
         path: String,
         #[source]
-        source: std::io::Error,
+        source: io::Error,
     },
-    #[error("rustc failed to link the final executable:\n{0}")]
-    Rustc(String),
+    #[error("{0}")]
+    LinkerMissing(String),
+    #[error("the linker could not create the executable:\n{0}")]
+    LinkerFailed(String),
 }
 
 /// Links `object_path` (a native object file, as produced by
 /// `druk_codegen_llvm::compile_to_object`) against the embedded
 /// `druk-runtime` static library into a standalone executable at
 /// `output_path`. The `main` symbol the object file defines becomes the
-/// real OS entry point of the finished executable; the tiny
-/// `#![no_main]` Rust source compiled alongside it (and immediately
-/// deleted afterward) contributes nothing but the ordinary Rust/C runtime
-/// startup glue, never its own `main`.
+/// program's entry point, reached through the C runtime's own startup code.
 pub fn link_executable(object_path: &Path, output_path: &Path) -> Result<(), LinkError> {
-    let runtime_lib_ext = if cfg!(target_os = "windows") {
-        "lib"
-    } else {
-        "a"
-    };
+    let runtime_lib_ext = if cfg!(windows) { "lib" } else { "a" };
     let runtime_lib_path = object_path.with_extension(format!("runtime.{runtime_lib_ext}"));
     std::fs::write(&runtime_lib_path, RUNTIME_STATICLIB).map_err(|source| LinkError::Io {
         path: runtime_lib_path.display().to_string(),
         source,
     })?;
 
-    let glue_path = object_path.with_extension("glue.rs");
-    let glue_write_result = std::fs::write(&glue_path, "#![no_main]\n");
+    let result = platform::run_linker(
+        object_path,
+        &runtime_lib_path,
+        RUNTIME_NATIVE_LIBS,
+        output_path,
+    );
 
-    let result = glue_write_result.and_then(|()| {
-        Command::new("rustc")
-            .args([
-                "--crate-type",
-                "bin",
-                "--crate-name",
-                "druk_build_glue",
-                "--edition",
-                "2021",
-                "-O",
-            ])
-            .arg("-C")
-            .arg(format!("link-arg={}", object_path.display()))
-            .arg("-C")
-            .arg(format!("link-arg={}", runtime_lib_path.display()))
-            .arg("-o")
-            .arg(output_path)
-            .arg(&glue_path)
-            .output()
-    });
-
-    let _ = std::fs::remove_file(&glue_path);
     let _ = std::fs::remove_file(&runtime_lib_path);
+    result
+}
 
-    let output = result.map_err(|source| LinkError::Io {
-        path: "rustc".to_string(),
-        source,
-    })?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(LinkError::Rustc(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ))
+/// Turns the outcome of running a linker into a [`LinkError`] a person can
+/// act on. `missing_hint` names what to install when the program itself
+/// could not be started. Some linkers (MSVC's) print their errors to
+/// standard output, so both streams are reported.
+fn finish(result: io::Result<Output>, missing_hint: &str) -> Result<(), LinkError> {
+    match result {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let mut report = String::from_utf8_lossy(&output.stdout).into_owned();
+            report.push_str(&String::from_utf8_lossy(&output.stderr));
+            Err(LinkError::LinkerFailed(report.trim().to_string()))
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            Err(LinkError::LinkerMissing(missing_hint.to_string()))
+        }
+        Err(source) => Err(LinkError::Io {
+            path: "the linker".to_string(),
+            source,
+        }),
     }
 }
