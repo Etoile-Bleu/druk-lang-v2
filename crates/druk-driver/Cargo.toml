@@ -14,3 +14,6 @@ druk-ir = { workspace = true }
 druk-codegen-llvm = { workspace = true }
 druk-diagnostics = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+find-msvc-tools = "0.1"

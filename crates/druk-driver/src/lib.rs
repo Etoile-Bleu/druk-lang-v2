@@ -159,6 +159,28 @@ mod tests {
         let _ = std::fs::remove_file(&output_path);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_built_program_does_not_import_the_visual_cpp_runtime_dlls() {
+        let mut output_path = std::env::temp_dir();
+        output_path.push(format!("druk_static_crt_test_{}.exe", std::process::id()));
+
+        let build_result = build_source(r#"བཀོད་ "hi";"#, &output_path);
+        assert!(build_result.is_ok(), "failed to build: {build_result:?}");
+        let bytes = std::fs::read(&output_path).expect("the built executable is readable");
+        let _ = std::fs::remove_file(&output_path);
+
+        for dll in [&b"VCRUNTIME140"[..], b"api-ms-win-crt-"] {
+            assert!(
+                !bytes
+                    .windows(dll.len())
+                    .any(|window| window.eq_ignore_ascii_case(dll)),
+                "the built program imports {}, so it needs the Visual C++ Redistributable",
+                String::from_utf8_lossy(dll)
+            );
+        }
+    }
+
     #[test]
     fn a_nested_loops_break_and_continue_target_only_their_own_loop() {
         // `break`/`continue` compile to a branch on a per-loop target block

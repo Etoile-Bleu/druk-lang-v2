@@ -73,8 +73,6 @@ lang_deps() {
             ;;
         druk-native)
             echo "file|$DRUK|DRUK|cargo build --release -p druk"
-            # `druk build` links the finished executable through rustc.
-            echo "cmd|$RUSTC|RUSTC|https://rustup.rs"
             ;;
         python) echo "cmd|$PYTHON|PYTHON|e.g. sudo apt install python3" ;;
         lua) echo "cmd|$LUA|LUA|e.g. sudo apt install lua5.4" ;;

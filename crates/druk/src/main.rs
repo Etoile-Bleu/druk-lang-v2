@@ -29,8 +29,9 @@ enum Command {
         #[arg(short = 'O', long, default_value = "0")]
         opt_level: OptLevel,
     },
-    /// Compile a .druk file to a standalone native executable. Requires
-    /// Rust's `rustc` on `PATH` to link it.
+    /// Compile a .druk file to a standalone native executable. Needs the
+    /// platform's linker: the Visual Studio Build Tools on Windows, a C
+    /// compiler such as gcc on Linux.
     Build {
         file: PathBuf,
         /// Where to write the executable. Defaults to the input file's
