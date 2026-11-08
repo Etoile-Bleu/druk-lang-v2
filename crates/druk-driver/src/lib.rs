@@ -165,7 +165,7 @@ mod tests {
         let mut output_path = std::env::temp_dir();
         output_path.push(format!("druk_static_crt_test_{}.exe", std::process::id()));
 
-        let build_result = build_source(r#"བཀོད་ "hi";"#, &output_path);
+        let build_result = build_source(r#"བཀོད་ "hi";"#, &output_path, OptLevel::O2);
         assert!(build_result.is_ok(), "failed to build: {build_result:?}");
         let bytes = std::fs::read(&output_path).expect("the built executable is readable");
         let _ = std::fs::remove_file(&output_path);
