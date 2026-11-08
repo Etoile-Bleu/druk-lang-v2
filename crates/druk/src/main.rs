@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use druk_driver::DriverError;
+use druk_driver::{DriverError, OptLevel};
 
 #[derive(Parser)]
 #[command(name = "druk", about = "The Druk language compiler", version)]
@@ -25,6 +25,9 @@ enum Command {
         /// `argv`/`argc`.
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
+        /// How hard LLVM optimizes the generated code: 0, 1, 2 or 3.
+        #[arg(short = 'O', long, default_value = "0")]
+        opt_level: OptLevel,
     },
     /// Compile a .druk file to a standalone native executable. Needs the
     /// platform's linker: the Visual Studio Build Tools on Windows, a C
@@ -35,6 +38,9 @@ enum Command {
         /// name (without `.druk`) in the current directory.
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// How hard LLVM optimizes the generated code: 0, 1, 2 or 3.
+        #[arg(short = 'O', long, default_value = "2")]
+        opt_level: OptLevel,
     },
 }
 
@@ -52,15 +58,23 @@ fn main() -> ExitCode {
                 )
             }),
         ),
-        Command::Run { file, args } => report(
+        Command::Run {
+            file,
+            args,
+            opt_level,
+        } => report(
             &file,
-            druk_driver::run_file(&file, &args).map(|()| String::new()),
+            druk_driver::run_file(&file, &args, opt_level).map(|()| String::new()),
         ),
-        Command::Build { file, output } => {
+        Command::Build {
+            file,
+            output,
+            opt_level,
+        } => {
             let output = output.unwrap_or_else(|| default_output_path(&file));
             report(
                 &file,
-                druk_driver::build_file(&file, &output)
+                druk_driver::build_file(&file, &output, opt_level)
                     .map(|()| format!("compiled {} -> {}", file.display(), output.display())),
             )
         }

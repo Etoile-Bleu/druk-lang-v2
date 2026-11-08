@@ -22,6 +22,11 @@ if [ -z "${DRUK:-}" ]; then
         DRUK=./target/release/druk
     fi
 fi
+DRUK_OPT_LEVEL=${DRUK_OPT_LEVEL:-}
+OPT_ARGS=()
+if [ -n "$DRUK_OPT_LEVEL" ]; then
+    OPT_ARGS=(-O "$DRUK_OPT_LEVEL")
+fi
 PYTHON=${PYTHON:-python3}
 LUA=${LUA:-lua}
 CC=${CC:-gcc}
@@ -81,7 +86,7 @@ lang_deps() {
 lang_build() {
     case $1 in
         druk-native)
-            "$DRUK" build "$2" -o "$3_druk_native" >&2 || return 1
+            "$DRUK" build ${OPT_ARGS[@]+"${OPT_ARGS[@]}"} "$2" -o "$3_druk_native" >&2 || return 1
             echo "$3_druk_native"
             ;;
         c)
@@ -99,7 +104,7 @@ lang_build() {
 # hyperfine runs with -N (no shell), so this must not need shell features.
 lang_cmd() {
     case $1 in
-        druk-jit) echo "$DRUK run $2" ;;
+        druk-jit) echo "$DRUK run ${OPT_ARGS[*]:-} $2" ;;
         druk-native | c | rust) echo "$3" ;;
         python) echo "$PYTHON $2" ;;
         lua) echo "$LUA $2" ;;
@@ -169,6 +174,8 @@ Options:
   -h, --help        show this help
 
 Environment: DRUK, PYTHON, LUA, CC, RUSTC override the tool used for each language.
+DRUK_OPT_LEVEL (0-3) sets druk's -O for both druk run and druk build; unset keeps
+each command's own default (0 for run, 2 for build).
 EOF
 }
 

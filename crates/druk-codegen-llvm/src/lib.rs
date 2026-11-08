@@ -12,13 +12,15 @@
 
 mod codegen;
 mod object;
+mod opt;
 mod runtime_fns;
 
 use std::path::Path;
 
 use inkwell::context::Context;
 use inkwell::AddressSpace;
-use inkwell::OptimizationLevel;
+
+pub use opt::OptLevel;
 
 use druk_diagnostics::Diagnostic;
 use druk_ir::Module as IrModule;
@@ -28,7 +30,7 @@ use runtime_fns::RuntimeFns;
 
 /// Compiles `module` and runs its top-level program via LLVM's JIT, with
 /// `args` as the program's own `argv`/`argc`.
-pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
+pub fn run(module: &IrModule, args: &[String], opt: OptLevel) -> Result<(), Diagnostic> {
     let context = Context::create();
     let llvm_module = context.create_module("druk");
     let builder = context.create_builder();
@@ -83,7 +85,7 @@ pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
     )?;
 
     let engine = llvm_module
-        .create_jit_execution_engine(OptimizationLevel::None)
+        .create_jit_execution_engine(opt.to_inkwell())
         .map_err(|err| {
             Diagnostic::error(format!("failed to create the JIT execution engine: {err}"))
         })?;
@@ -112,7 +114,11 @@ pub fn run(module: &IrModule, args: &[String]) -> Result<(), Diagnostic> {
 ///
 /// On Windows MSVC this relies on `druk` itself being built with a static
 /// C runtime, which `build.rs` enforces: see that file for why.
-pub fn compile_to_object(module: &IrModule, object_path: &Path) -> Result<(), Diagnostic> {
+pub fn compile_to_object(
+    module: &IrModule,
+    object_path: &Path,
+    opt: OptLevel,
+) -> Result<(), Diagnostic> {
     let context = Context::create();
     let llvm_module = context.create_module("druk");
     let builder = context.create_builder();
@@ -167,7 +173,7 @@ pub fn compile_to_object(module: &IrModule, object_path: &Path) -> Result<(), Di
         MainKind::Native,
     )?;
 
-    object::emit_object(&llvm_module, object_path)
+    object::emit_object(&llvm_module, object_path, opt)
 }
 
 #[cfg(test)]
@@ -195,7 +201,7 @@ mod tests {
         );
         let hir = druk_hir::check(ast).expect("source should type-check");
         let ir = druk_ir::lower(&hir).expect("hir should lower");
-        run(&ir, &[]).expect("module should compile and run");
+        run(&ir, &[], OptLevel::O0).expect("module should compile and run");
     }
 
     #[test]
@@ -335,7 +341,7 @@ mod tests {
                     std::process::id(),
                     path.file_stem().unwrap_or_default().to_string_lossy()
                 ));
-                let result = compile_to_object(&ir, &object_path);
+                let result = compile_to_object(&ir, &object_path, OptLevel::O2);
                 assert!(
                     result.is_ok(),
                     "failed to emit an object for {path:?}: {result:?}"
@@ -363,7 +369,7 @@ mod tests {
     fn emitted_object_starts_with_the_native_object_format_header() {
         let ir = lower_source(r#"བཀོད་ "hi";"#);
         let object_path = temp_object_path("header");
-        compile_to_object(&ir, &object_path).expect("object should be emitted");
+        compile_to_object(&ir, &object_path, OptLevel::O2).expect("object should be emitted");
         let bytes = std::fs::read(&object_path).expect("object file is readable");
         let _ = std::fs::remove_file(&object_path);
 
@@ -379,7 +385,7 @@ mod tests {
         let ir = lower_source(r#"བཀོད་ "hi";"#);
         let object_path = temp_object_path("repeat");
         for _ in 0..50 {
-            compile_to_object(&ir, &object_path).expect("object should be emitted");
+            compile_to_object(&ir, &object_path, OptLevel::O2).expect("object should be emitted");
         }
         let _ = std::fs::remove_file(&object_path);
     }
