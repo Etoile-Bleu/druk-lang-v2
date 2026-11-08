@@ -31,11 +31,10 @@ deviation, not a single cherry-picked number).
 - **`druk build (native, prebuilt)` is the same program ahead-of-time compiled once with `druk
   build`, then just executed**, the same way the C column is measured. It isolates generated-code
   speed from JIT compile time, and is the fairer of the two Druk columns to compare against C.
-  The two backends do not currently use the same optimization level: `druk run`'s JIT uses
-  `OptimizationLevel::None`, while `druk build` already generates code at LLVM's default (`-O2`)
-  level (see `druk-codegen-llvm`). So the gap between them below is a mix of JIT-startup overhead and a real
-  codegen-quality difference, not purely the former; there is no way yet to control either
-  backend's optimization level from the CLI, which is tracked separately.
+  Both backends now read the same `-O 0|1|2|3` flag (`druk run` defaults to 0, `druk build` to
+  2), and `DRUK_OPT_LEVEL=<0-3> bash benches/run.sh` applies one level to both, so the two
+  columns can be compared at an equal optimization level. See "Optimization level" below for
+  what that comparison showed.
 
 ## Methodology
 
@@ -167,12 +166,31 @@ practice than CPython's own list growth and boxed-integer overhead at this size.
   `examples/` both lean toward).
 - `druk build`'s native binaries are consistently at or ahead of `druk run`'s JIT, and the gap
   widens for short-running programs, where JIT compile time at startup is a larger fraction of
-  total wall time. Part of this gap is also a real codegen-quality difference: `druk build`
-  already generates code at LLVM's default (`-O2`) level, while `druk run`'s JIT uses `OptimizationLevel::None`. Neither
-  is currently controllable from the CLI; exposing and unifying an optimization-level flag across
-  both backends is tracked as a follow-up.
+  total wall time. It is not a codegen-quality difference: at an equal optimization level the
+  two backends stay apart by the same margin (see "Optimization level" below).
 - Function-call overhead is Druk's clearest current weakness relative to even a plain, pre-JIT
   Lua interpreter, in both backends equally. Recursive algorithms (the shape of several bundled
   examples, e.g. `06_recursion.druk`) pay this cost directly.
 - None of this is close to C, which is expected and, per the caveats above, not the point of this
   comparison.
+
+## Optimization level
+
+`druk run -O<n>` and `druk build -O<n>` set LLVM's code generator level (0 to 3). Measured with
+`DRUK_OPT_LEVEL=<n> bash benches/run.sh --no-report -l druk-jit,druk-native` (hyperfine 1.20.0,
+Windows 11, release build, same machine as above; mean of at least 20 runs):
+
+| Task | `druk run` -O0 | `druk run` -O2 | `druk run` -O3 | `druk build` -O0 | `druk build` -O2 | `druk build` -O3 |
+|:---|---:|---:|---:|---:|---:|---:|
+| `array_sum` | 36.1 ms | 37.5 ms | 38.7 ms | 26.4 ms | 26.5 ms | 26.2 ms |
+| `fib` | 994.5 ms | 991.4 ms | 990.1 ms | 977.3 ms | 963.5 ms | 964.7 ms |
+| `loop_sum` | 592.2 ms | 576.2 ms | 578.5 ms | 576.7 ms | 561.9 ms | 561.8 ms |
+
+Reading this honestly: the level changes the result by at most about 3% on these tasks, and for
+`druk run` on the short `array_sum` task higher levels are slightly slower, because LLVM spends
+more time compiling on every launch. The flag changes only the machine-code generator's level;
+it does not run LLVM's IR optimization pipeline (inlining, mem2reg and so on), and these tasks
+are dominated by Druk runtime and GC calls rather than by instruction selection. So the earlier
+suspicion that part of the JIT-versus-native gap came from `None` versus `-O2` is not supported
+by these numbers; the gap is JIT startup. Making the levels matter would take running an IR
+pass pipeline before code generation, which is a separate piece of work.

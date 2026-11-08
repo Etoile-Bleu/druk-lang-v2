@@ -5,6 +5,7 @@ use std::path::Path;
 use druk_diagnostics::Diagnostic;
 use druk_hir::Hir;
 
+pub use druk_codegen_llvm::OptLevel;
 pub use link::LinkError;
 
 #[derive(Debug, thiserror::Error)]
@@ -47,19 +48,19 @@ pub fn check_file(path: &Path) -> Result<Hir, DriverError> {
 
 /// Runs `source` through the full pipeline (frontend, HIR, IR, LLVM JIT)
 /// and executes it, with `args` as the program's own `argv`/`argc`.
-pub fn run_source(source: &str, args: &[String]) -> Result<(), Vec<Diagnostic>> {
+pub fn run_source(source: &str, args: &[String], opt: OptLevel) -> Result<(), Vec<Diagnostic>> {
     let hir = check_source(source)?;
     let ir = druk_ir::lower(&hir)?;
-    druk_codegen_llvm::run(&ir, args).map_err(|diagnostic| vec![diagnostic])
+    druk_codegen_llvm::run(&ir, args, opt).map_err(|diagnostic| vec![diagnostic])
 }
 
 /// Reads `path` from disk and runs [`run_source`] over its contents.
-pub fn run_file(path: &Path, args: &[String]) -> Result<(), DriverError> {
+pub fn run_file(path: &Path, args: &[String], opt: OptLevel) -> Result<(), DriverError> {
     let source = std::fs::read_to_string(path).map_err(|source| DriverError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    run_source(&source, args).map_err(DriverError::Diagnostics)
+    run_source(&source, args, opt).map_err(DriverError::Diagnostics)
 }
 
 /// Compiles `source` to a standalone native executable at `output_path`:
@@ -68,12 +69,12 @@ pub fn run_file(path: &Path, args: &[String]) -> Result<(), DriverError> {
 /// library (see `link::link_executable`). The intermediate object file is
 /// written next to `output_path` and removed again once linking finishes
 /// (or fails), successful or not.
-pub fn build_source(source: &str, output_path: &Path) -> Result<(), DriverError> {
+pub fn build_source(source: &str, output_path: &Path, opt: OptLevel) -> Result<(), DriverError> {
     let hir = check_source(source).map_err(DriverError::Diagnostics)?;
     let ir = druk_ir::lower(&hir).map_err(DriverError::Diagnostics)?;
 
     let object_path = output_path.with_extension("o");
-    druk_codegen_llvm::compile_to_object(&ir, &object_path)
+    druk_codegen_llvm::compile_to_object(&ir, &object_path, opt)
         .map_err(|diagnostic| DriverError::Diagnostics(vec![diagnostic]))?;
 
     let link_result = link::link_executable(&object_path, output_path);
@@ -82,12 +83,12 @@ pub fn build_source(source: &str, output_path: &Path) -> Result<(), DriverError>
 }
 
 /// Reads `path` from disk and runs [`build_source`] over its contents.
-pub fn build_file(path: &Path, output_path: &Path) -> Result<(), DriverError> {
+pub fn build_file(path: &Path, output_path: &Path, opt: OptLevel) -> Result<(), DriverError> {
     let source = std::fs::read_to_string(path).map_err(|source| DriverError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    build_source(&source, output_path)
+    build_source(&source, output_path, opt)
 }
 
 /// Renders every diagnostic in `diagnostics` against `source_name`/`source`,
@@ -120,7 +121,7 @@ mod tests {
         for entry in entries {
             let path = entry.expect("readable dir entry").path();
             if path.extension().map(|ext| ext == "druk").unwrap_or(false) {
-                let result = run_file(&path, &[]);
+                let result = run_file(&path, &[], OptLevel::O0);
                 assert!(result.is_ok(), "failed to run {path:?}: {result:?}");
             }
         }
@@ -140,7 +141,7 @@ mod tests {
         let mut output_path = std::env::temp_dir();
         output_path.push(format!("druk_native_build_test_{}.exe", std::process::id()));
 
-        let build_result = build_file(&source_path, &output_path);
+        let build_result = build_file(&source_path, &output_path, OptLevel::O2);
         assert!(
             build_result.is_ok(),
             "failed to build a standalone executable: {build_result:?}"
@@ -195,7 +196,7 @@ mod tests {
             std::process::id()
         ));
 
-        let build_result = build_source(source, &output_path);
+        let build_result = build_source(source, &output_path, OptLevel::O2);
         assert!(
             build_result.is_ok(),
             "failed to build a standalone executable: {build_result:?}"
@@ -242,7 +243,7 @@ mod tests {
             std::process::id()
         ));
 
-        let build_result = build_source(source, &output_path);
+        let build_result = build_source(source, &output_path, OptLevel::O2);
         assert!(
             build_result.is_ok(),
             "failed to build a standalone executable: {build_result:?}"
@@ -288,7 +289,7 @@ mod tests {
         let mut output_path = std::env::temp_dir();
         output_path.push(format!("druk_for_in_while_test_{}.exe", std::process::id()));
 
-        let build_result = build_source(source, &output_path);
+        let build_result = build_source(source, &output_path, OptLevel::O2);
         assert!(
             build_result.is_ok(),
             "failed to build a standalone executable: {build_result:?}"
