@@ -1,0 +1,56 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds to fuzz each target"
+        default: "300"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "crates/druk-lexer/**"
+      - "crates/druk-parser/**"
+      - "crates/druk-hir/**"
+      - "crates/druk-ast/**"
+      - "crates/druk-diagnostics/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [lexer, parser, check]
+    env:
+      FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '300' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz ${{ matrix.target }}
+        run: cargo fuzz run ${{ matrix.target }} -- examples -max_total_time=${{ env.FUZZ_SECONDS }} -timeout=10
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
