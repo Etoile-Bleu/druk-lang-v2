@@ -21,3 +21,6 @@ debug_*.txt
 .llvm-stub-libs/
 .cargo/
 /benches/results/
+/fuzz/target
+/fuzz/artifacts
+/fuzz/corpus
