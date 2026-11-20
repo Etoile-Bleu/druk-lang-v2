@@ -6,6 +6,15 @@ use crate::Parser;
 
 impl<'src> Parser<'src> {
     pub(crate) fn parse_expression(&mut self) -> ExprId {
+        if !self.enter_nested() {
+            return self.ast.alloc_expr(Expr::Literal(Literal::Nil));
+        }
+        let expr = self.parse_expression_unguarded();
+        self.leave_nested();
+        expr
+    }
+
+    fn parse_expression_unguarded(&mut self) -> ExprId {
         if let Some(lambda) = self.try_parse_lambda() {
             return lambda;
         }
@@ -177,7 +186,11 @@ impl<'src> Parser<'src> {
         };
         if let Some(op) = op {
             self.advance();
+            if !self.enter_nested() {
+                return self.ast.alloc_expr(Expr::Literal(Literal::Nil));
+            }
             let operand = self.parse_unary();
+            self.leave_nested();
             return self.ast.alloc_expr(Expr::Unary { op, operand });
         }
         self.parse_call()

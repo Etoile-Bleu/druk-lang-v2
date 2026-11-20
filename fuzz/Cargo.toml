@@ -1,0 +1,37 @@
+[package]
+name = "druk-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+druk-lexer = { path = "../crates/druk-lexer" }
+druk-parser = { path = "../crates/druk-parser" }
+druk-hir = { path = "../crates/druk-hir" }
+
+[workspace]
+
+[[bin]]
+name = "lexer"
+path = "fuzz_targets/lexer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "check"
+path = "fuzz_targets/check.rs"
+test = false
+doc = false
+bench = false

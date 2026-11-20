@@ -1,4 +1,4 @@
-use druk_ast::{BaseType, Param, Stmt, StmtId, TypeAnnotation};
+use druk_ast::{BaseType, Expr, Literal, Param, Stmt, StmtId, TypeAnnotation};
 use druk_diagnostics::Diagnostic;
 use druk_lexer::TokenKind;
 
@@ -6,6 +6,16 @@ use crate::Parser;
 
 impl<'src> Parser<'src> {
     pub(crate) fn parse_statement(&mut self) -> StmtId {
+        if !self.enter_nested() {
+            let placeholder = self.ast.alloc_expr(Expr::Literal(Literal::Nil));
+            return self.ast.alloc_stmt(Stmt::Expr(placeholder));
+        }
+        let stmt = self.parse_statement_unguarded();
+        self.leave_nested();
+        stmt
+    }
+
+    fn parse_statement_unguarded(&mut self) -> StmtId {
         match self.peek() {
             Some(TokenKind::KwNumber | TokenKind::KwString | TokenKind::KwBool) => {
                 self.parse_let_stmt()

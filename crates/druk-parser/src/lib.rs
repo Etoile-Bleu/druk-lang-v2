@@ -18,8 +18,13 @@ pub fn parse(source: &str) -> (Ast, Vec<Diagnostic>) {
         pos: 0,
         ast: Ast::new(),
         diagnostics: Vec::new(),
+        depth: 0,
+        abort_at: None,
     };
     parser.run();
+    if let Some(kept) = parser.abort_at {
+        parser.diagnostics.truncate(kept);
+    }
     diagnostics.append(&mut parser.diagnostics);
     (parser.ast, diagnostics)
 }
@@ -29,7 +34,11 @@ struct Parser<'src> {
     pos: usize,
     ast: Ast,
     diagnostics: Vec<Diagnostic>,
+    depth: usize,
+    abort_at: Option<usize>,
 }
+
+const MAX_NESTING_DEPTH: usize = 100;
 
 impl<'src> Parser<'src> {
     fn run(&mut self) {
@@ -41,6 +50,30 @@ impl<'src> Parser<'src> {
                 self.synchronize();
             }
         }
+    }
+
+    fn enter_nested(&mut self) -> bool {
+        if self.abort_at.is_some() {
+            return false;
+        }
+        if self.depth >= MAX_NESTING_DEPTH {
+            let span = self.current_span();
+            self.diagnostics.push(
+                Diagnostic::error(format!(
+                    "this has too many brackets or blocks inside each other (the limit is {MAX_NESTING_DEPTH})"
+                ))
+                .with_label(span, "try splitting the code before this point into smaller steps"),
+            );
+            self.abort_at = Some(self.diagnostics.len());
+            self.pos = self.tokens.len();
+            return false;
+        }
+        self.depth += 1;
+        true
+    }
+
+    fn leave_nested(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     fn at_end(&self) -> bool {
