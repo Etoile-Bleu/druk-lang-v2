@@ -71,6 +71,14 @@ pub enum TokenKind {
     GlobalArgc,
     #[token("ནང་འཇུག་")]
     BuiltinInput,
+    #[token("རྩ་བ་")]
+    BuiltinSqrt,
+    #[token("ཉུང་ཤོས་")]
+    BuiltinMin,
+    #[token("མང་ཤོས་")]
+    BuiltinMax,
+    #[token("རང་བྱུང་")]
+    BuiltinRandom,
 
     // ASCII letters/digits/underscore, or Tibetan consonants (ཀ-ཬ), vowel
     // signs (ཱ-྄), subjoined consonants (ྐ-ྼ), and the tsheg syllable
@@ -231,6 +239,26 @@ mod tests {
         assert_eq!(kinds("ནང་འཇུག་"), vec![TokenKind::BuiltinInput]);
         assert_eq!(kinds("ནང་འཇུག་ཐོ་"), vec![TokenKind::GlobalArgv]);
         assert_eq!(kinds("ནང་འཇུག་གྲངས་"), vec![TokenKind::GlobalArgc]);
+    }
+
+    #[test]
+    fn lexes_the_math_builtins_and_keeps_longer_names_as_identifiers() {
+        assert_eq!(kinds("རྩ་བ་"), vec![TokenKind::BuiltinSqrt]);
+        assert_eq!(kinds("ཉུང་ཤོས་"), vec![TokenKind::BuiltinMin]);
+        assert_eq!(kinds("མང་ཤོས་"), vec![TokenKind::BuiltinMax]);
+        assert_eq!(kinds("རང་བྱུང་"), vec![TokenKind::BuiltinRandom]);
+        assert_eq!(kinds("མང་ཤོས་ཀྱི་"), vec![TokenKind::Ident]);
+        assert_eq!(
+            kinds("ཉུང་ཤོས་(༤, ༩)"),
+            vec![
+                TokenKind::BuiltinMin,
+                TokenKind::LParen,
+                TokenKind::Integer,
+                TokenKind::Comma,
+                TokenKind::Integer,
+                TokenKind::RParen,
+            ]
+        );
     }
 
     #[test]
