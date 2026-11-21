@@ -98,6 +98,11 @@ pub enum BuiltinOp {
     Input,
     Argv,
     Argc,
+    Sqrt,
+    Abs,
+    Min,
+    Max,
+    Random,
 }
 
 #[derive(Debug, Clone)]
