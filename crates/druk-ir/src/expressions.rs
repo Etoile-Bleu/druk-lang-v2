@@ -170,6 +170,11 @@ fn builtin_fn_op(name: &str) -> Option<BuiltinOp> {
         "pop" => BuiltinOp::Pop,
         "typeof" => BuiltinOp::TypeOf,
         "input" => BuiltinOp::Input,
+        "sqrt" => BuiltinOp::Sqrt,
+        "abs" => BuiltinOp::Abs,
+        "min" => BuiltinOp::Min,
+        "max" => BuiltinOp::Max,
+        "random" => BuiltinOp::Random,
         _ => return None,
     })
 }
