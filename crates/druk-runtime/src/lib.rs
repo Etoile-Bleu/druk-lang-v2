@@ -26,12 +26,14 @@
 mod arrays;
 mod builtins;
 mod closures;
+mod math;
 mod strings;
 mod structs;
 
 pub use arrays::*;
 pub use builtins::*;
 pub use closures::*;
+pub use math::*;
 pub use strings::*;
 pub use structs::*;
 
