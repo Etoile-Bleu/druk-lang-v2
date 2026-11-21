@@ -135,6 +135,14 @@ fn builtin_type(name: &str) -> Option<Type> {
             params: vec![],
             ret: Box::new(Type::Str),
         },
+        "sqrt" | "abs" => Type::Function {
+            params: vec![Type::Number],
+            ret: Box::new(Type::Number),
+        },
+        "min" | "max" | "random" => Type::Function {
+            params: vec![Type::Number, Type::Number],
+            ret: Box::new(Type::Number),
+        },
         "argv" => Type::Array(Box::new(Type::Str)),
         "argc" => Type::Number,
         _ => return None,

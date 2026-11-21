@@ -28,6 +28,11 @@ pub(crate) struct RuntimeFns<'ctx> {
     pub(crate) argv: FunctionValue<'ctx>,
     pub(crate) argc: FunctionValue<'ctx>,
     pub(crate) init_args: FunctionValue<'ctx>,
+    pub(crate) sqrt: FunctionValue<'ctx>,
+    pub(crate) abs: FunctionValue<'ctx>,
+    pub(crate) min: FunctionValue<'ctx>,
+    pub(crate) max: FunctionValue<'ctx>,
+    pub(crate) random: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeFns<'ctx> {
@@ -173,6 +178,14 @@ impl<'ctx> RuntimeFns<'ctx> {
             None,
         );
 
+        let unary = void_t.fn_type(&[ptr_t.into(), ptr_t.into()], false);
+        let binary = void_t.fn_type(&[ptr_t.into(), ptr_t.into(), ptr_t.into()], false);
+        let sqrt = module.add_function("druk_rt_sqrt", unary, None);
+        let abs = module.add_function("druk_rt_abs", unary, None);
+        let min = module.add_function("druk_rt_min", binary, None);
+        let max = module.add_function("druk_rt_max", binary, None);
+        let random = module.add_function("druk_rt_random", binary, None);
+
         Self {
             print,
             make_string,
@@ -197,6 +210,11 @@ impl<'ctx> RuntimeFns<'ctx> {
             argv,
             argc,
             init_args,
+            sqrt,
+            abs,
+            min,
+            max,
+            random,
         }
     }
 
@@ -277,6 +295,14 @@ impl<'ctx> RuntimeFns<'ctx> {
         engine.add_global_mapping(
             &self.init_args,
             druk_runtime::druk_rt_init_args as *const () as usize,
+        );
+        engine.add_global_mapping(&self.sqrt, druk_runtime::druk_rt_sqrt as *const () as usize);
+        engine.add_global_mapping(&self.abs, druk_runtime::druk_rt_abs as *const () as usize);
+        engine.add_global_mapping(&self.min, druk_runtime::druk_rt_min as *const () as usize);
+        engine.add_global_mapping(&self.max, druk_runtime::druk_rt_max as *const () as usize);
+        engine.add_global_mapping(
+            &self.random,
+            druk_runtime::druk_rt_random as *const () as usize,
         );
     }
 }

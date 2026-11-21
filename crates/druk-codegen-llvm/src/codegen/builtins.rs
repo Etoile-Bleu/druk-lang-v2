@@ -27,6 +27,11 @@ impl<'ctx> CodeGen<'ctx> {
             BuiltinOp::Input => self.runtime.input,
             BuiltinOp::Argv => self.runtime.argv,
             BuiltinOp::Argc => self.runtime.argc,
+            BuiltinOp::Sqrt => self.runtime.sqrt,
+            BuiltinOp::Abs => self.runtime.abs,
+            BuiltinOp::Min => self.runtime.min,
+            BuiltinOp::Max => self.runtime.max,
+            BuiltinOp::Random => self.runtime.random,
         };
         let call_args: Vec<_> = arg_ptrs.iter().map(|ptr| (*ptr).into()).collect();
         Ok(self.call_with_out_param(function, runtime_fn, &call_args, "call_builtin"))
